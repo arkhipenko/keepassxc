@@ -340,6 +340,33 @@ void DatabaseTabWidget::mergeDatabase(const QString& filePath)
 }
 
 /**
+ * Database > Synchronize > Synchronize with File...: select one or more database files and
+ * synchronize the current database with them, as KeePass 2.x does.
+ */
+void DatabaseTabWidget::synchronizeDatabase()
+{
+    auto dbWidget = currentDatabaseWidget();
+    if (!dbWidget || dbWidget->isLocked()) {
+        return;
+    }
+    auto filter = QString("%1 (*.kdbx);;%2 (*)").arg(tr("KeePass 2 Database"), tr("All files"));
+    auto fileNames =
+        fileDialog()->getOpenFileNames(this, tr("Synchronize database"), FileDialog::getLastDir("synchronize"), filter);
+    if (!fileNames.isEmpty()) {
+        FileDialog::saveLastDir("synchronize", fileNames.first(), true);
+        synchronizeDatabase(fileNames);
+    }
+}
+
+void DatabaseTabWidget::synchronizeDatabase(const QStringList& filePaths)
+{
+    auto dbWidget = currentDatabaseWidget();
+    if (dbWidget && !dbWidget->isLocked()) {
+        dbWidget->synchronizeWithFiles(filePaths);
+    }
+}
+
+/**
  * Attempt to close the current database and remove its tab afterwards.
  *
  * @param index index of the database tab to close
@@ -881,7 +908,14 @@ void DatabaseTabWidget::updateLastDatabases(const QSharedPointer<Database>& data
     if (database->isTemporaryDatabase() || database->filePath().isEmpty()) {
         return;
     }
-    auto filename = database->filePath();
+    addToLastDatabases(database->filePath());
+}
+
+void DatabaseTabWidget::addToLastDatabases(const QString& filename)
+{
+    if (filename.isEmpty()) {
+        return;
+    }
     if (!config()->get(Config::RememberLastDatabases).toBool()) {
         config()->remove(Config::LastDatabases);
     } else {

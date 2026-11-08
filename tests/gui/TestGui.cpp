@@ -32,10 +32,12 @@
 #include <QSignalSpy>
 #include <QSpinBox>
 #include <QTableWidget>
+#include <QTemporaryDir>
 #include <QTest>
 #include <QToolBar>
 
 #include "config-keepassx-tests.h"
+#include "core/FileWatcher.h"
 #include "core/PasswordHealth.h"
 #include "core/Tools.h"
 #include "crypto/Crypto.h"
@@ -66,6 +68,7 @@
 #include "gui/tag/TagsEdit.h"
 #include "gui/wizard/NewDatabaseWizard.h"
 #include "keys/FileKey.h"
+#include "keys/PasswordKey.h"
 #include "mock/MockRemoteProcess.h"
 
 #define TEST_MODAL_NO_WAIT(TEST_CODE)                                                                                  \
@@ -392,6 +395,230 @@ void TestGui::testMergeDatabase()
     QCOMPARE(m_db->rootGroup()->children().at(6)->entries().size(), 1);
     // the General group contains one entry merged from the other db
     QCOMPARE(m_db->rootGroup()->findChildByName("General")->entries().size(), 1);
+}
+
+namespace
+{
+    QSharedPointer<CompositeKey> syncTestKey(const QString& password = "a")
+    {
+        auto key = QSharedPointer<CompositeKey>::create();
+        key->addKey(QSharedPointer<PasswordKey>::create(password));
+        return key;
+    }
+
+    QByteArray syncTestFileData(const QString& filePath)
+    {
+        QFile file(filePath);
+        if (!file.open(QIODevice::ReadOnly)) {
+            return {};
+        }
+        return file.readAll();
+    }
+
+    // Change a database file outside the GUI: open it, apply the change, save it
+    bool changeDatabaseFile(const QString& filePath,
+                            const std::function<void(Database*)>& change,
+                            const QSharedPointer<CompositeKey>& newKey = {})
+    {
+        auto db = QSharedPointer<Database>::create();
+        if (!db->open(filePath, syncTestKey())) {
+            return false;
+        }
+        change(db.data());
+        if (newKey) {
+            db->setKey(newKey);
+        }
+        return db->save(Database::DirectWrite);
+    }
+
+    void addSyncTestEntry(Database* db, const QString& title)
+    {
+        auto* entry = new Entry();
+        entry->setUuid(QUuid::createUuid());
+        entry->setTitle(title);
+        entry->setGroup(db->rootGroup());
+    }
+} // namespace
+
+/**
+ * Database > Synchronize > Synchronize with File: two other files are merged into the open
+ * database (additions and deletions), the open database is saved, and the saved file is copied
+ * over both other files. Then Synchronize > Recent synchronizes again with one of them.
+ */
+void TestGui::testSynchronizeDatabase()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString fileB = dir.filePath("b.kdbx");
+    const QString fileC = dir.filePath("c.kdbx");
+    QVERIFY(QFile::copy(m_dbFilePath, fileB));
+    QVERIFY(QFile::copy(m_dbFilePath, fileC));
+    QVERIFY(m_db->rootGroup()->findEntryByPath("Sample Entry"));
+
+    QVERIFY(changeDatabaseFile(fileB, [](Database* db) {
+        addSyncTestEntry(db, "Added in B");
+        delete db->rootGroup()->findEntryByPath("Sample Entry");
+    }));
+    QVERIFY(changeDatabaseFile(fileC, [](Database* db) { addSyncTestEntry(db, "Added in C"); }));
+    addSyncTestEntry(m_db.data(), "Added in open database");
+
+    QSignalSpy syncSpy(m_dbWidget.data(), &DatabaseWidget::databaseSynchronized);
+    QSignalSpy syncStartSpy(m_dbWidget.data(), &DatabaseWidget::databaseSynchronizing);
+    fileDialog()->setNextFileNames({fileB, fileC});
+    triggerAction("actionDatabaseSynchronize");
+
+    QTRY_COMPARE(syncSpy.count(), 1);
+    QCOMPARE(syncStartSpy.count(), 1);
+    QVERIFY(syncSpy.takeFirst().at(0).toBool());
+
+    QVERIFY(m_db->rootGroup()->findEntryByPath("Added in B"));
+    QVERIFY(m_db->rootGroup()->findEntryByPath("Added in C"));
+    QVERIFY(m_db->rootGroup()->findEntryByPath("Added in open database"));
+    QVERIFY(!m_db->rootGroup()->findEntryByPath("Sample Entry"));
+    QVERIFY(!m_db->isModified());
+
+    // All three files are now the same
+    const QByteArray savedData = syncTestFileData(m_dbFilePath);
+    QVERIFY(!savedData.isEmpty());
+    QCOMPARE(syncTestFileData(fileB), savedData);
+    QCOMPARE(syncTestFileData(fileC), savedData);
+
+    // The other files are in the recent databases list
+    const auto lastDatabases = config()->get(Config::LastDatabases).toStringList();
+    QVERIFY(lastDatabases.contains(QDir::toNativeSeparators(fileB)));
+    QVERIFY(lastDatabases.contains(QDir::toNativeSeparators(fileC)));
+
+    // Synchronize > Recent: change B again, then synchronize with it from the menu
+    QVERIFY(changeDatabaseFile(fileB, [](Database* db) { addSyncTestEntry(db, "Added in B later"); }));
+    auto* recentMenu = m_mainWindow->findChild<QMenu*>("menuSynchronizeRecent");
+    QVERIFY(recentMenu);
+    emit recentMenu->aboutToShow();
+    QAction* recentAction = nullptr;
+    for (auto* action : recentMenu->actions()) {
+        if (action->text() == Tools::escapeAccelerators(QDir::toNativeSeparators(fileB))) {
+            recentAction = action;
+        }
+    }
+    QVERIFY(recentAction);
+    recentAction->trigger();
+
+    QTRY_COMPARE(syncSpy.count(), 1);
+    QVERIFY(syncSpy.takeFirst().at(0).toBool());
+    QVERIFY(m_db->rootGroup()->findEntryByPath("Added in B later"));
+    QCOMPARE(syncTestFileData(fileB), syncTestFileData(m_dbFilePath));
+}
+
+/**
+ * A file with a different key is refused. Nothing is saved and nothing is copied, also for the
+ * file that did merge. The merged data stays in the open database as unsaved changes.
+ */
+void TestGui::testSynchronizeDatabaseDifferentKey()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString fileGood = dir.filePath("good.kdbx");
+    const QString fileOtherKey = dir.filePath("otherkey.kdbx");
+    QVERIFY(QFile::copy(m_dbFilePath, fileGood));
+    QVERIFY(QFile::copy(m_dbFilePath, fileOtherKey));
+    QVERIFY(changeDatabaseFile(fileGood, [](Database* db) { addSyncTestEntry(db, "Added in good file"); }));
+    QVERIFY(changeDatabaseFile(
+        fileOtherKey, [](Database* db) { addSyncTestEntry(db, "Added in other key file"); }, syncTestKey("b")));
+
+    const QByteArray openFileBefore = syncTestFileData(m_dbFilePath);
+    const QByteArray goodFileBefore = syncTestFileData(fileGood);
+    const QByteArray otherKeyFileBefore = syncTestFileData(fileOtherKey);
+
+    QSignalSpy syncSpy(m_dbWidget.data(), &DatabaseWidget::databaseSynchronized);
+    fileDialog()->setNextFileNames({fileGood, fileOtherKey});
+    triggerAction("actionDatabaseSynchronize");
+
+    QTRY_COMPARE(syncSpy.count(), 1);
+    QVERIFY(!syncSpy.takeFirst().at(0).toBool());
+
+    QCOMPARE(syncTestFileData(m_dbFilePath), openFileBefore);
+    QCOMPARE(syncTestFileData(fileGood), goodFileBefore);
+    QCOMPARE(syncTestFileData(fileOtherKey), otherKeyFileBefore);
+
+    QVERIFY(m_db->rootGroup()->findEntryByPath("Added in good file"));
+    QVERIFY(!m_db->rootGroup()->findEntryByPath("Added in other key file"));
+    QVERIFY(m_db->isModified());
+    QTRY_VERIFY(m_tabWidget->tabText(m_tabWidget->currentIndex()).endsWith("*"));
+}
+
+/**
+ * A save finds the file changed on disk. The answer Synchronize merges the file on disk into the
+ * database in memory and saves over the file, so that both changes are kept.
+ */
+void TestGui::testSynchronizeOnSaveConflict()
+{
+    // Hold off the file watcher, so that the save is the first to find the change on disk
+    auto* fileWatcher = m_db->findChild<FileWatcher*>();
+    QVERIFY(fileWatcher);
+    fileWatcher->pause();
+    QVERIFY(changeDatabaseFile(m_dbFilePath, [](Database* db) { addSyncTestEntry(db, "Added on disk"); }));
+    addSyncTestEntry(m_db.data(), "Added in memory");
+
+    QSignalSpy syncSpy(m_dbWidget.data(), &DatabaseWidget::databaseSynchronized);
+    MessageBox::setNextAnswer(MessageBox::Synchronize);
+    triggerAction("actionDatabaseSave");
+
+    QTRY_COMPARE(syncSpy.count(), 1);
+    QVERIFY(syncSpy.takeFirst().at(0).toBool());
+    QVERIFY(m_db->rootGroup()->findEntryByPath("Added on disk"));
+    QVERIFY(m_db->rootGroup()->findEntryByPath("Added in memory"));
+    QVERIFY(!m_db->isModified());
+
+    auto onDisk = QSharedPointer<Database>::create();
+    QVERIFY(onDisk->open(m_dbFilePath, syncTestKey()));
+    QVERIFY(onDisk->rootGroup()->findEntryByPath("Added on disk"));
+    QVERIFY(onDisk->rootGroup()->findEntryByPath("Added in memory"));
+}
+
+/**
+ * The answer Overwrite saves the database in memory over the file. The change on disk is lost.
+ */
+void TestGui::testOverwriteOnSaveConflict()
+{
+    // Hold off the file watcher, so that the save is the first to find the change on disk
+    auto* fileWatcher = m_db->findChild<FileWatcher*>();
+    QVERIFY(fileWatcher);
+    fileWatcher->pause();
+    QVERIFY(changeDatabaseFile(m_dbFilePath, [](Database* db) { addSyncTestEntry(db, "Added on disk"); }));
+    addSyncTestEntry(m_db.data(), "Added in memory");
+
+    MessageBox::setNextAnswer(MessageBox::Overwrite);
+    triggerAction("actionDatabaseSave");
+
+    QTRY_VERIFY(!m_db->isModified());
+    QVERIFY(!m_db->rootGroup()->findEntryByPath("Added on disk"));
+
+    auto onDisk = QSharedPointer<Database>::create();
+    QVERIFY(onDisk->open(m_dbFilePath, syncTestKey()));
+    QVERIFY(!onDisk->rootGroup()->findEntryByPath("Added on disk"));
+    QVERIFY(onDisk->rootGroup()->findEntryByPath("Added in memory"));
+}
+
+/**
+ * The answer Cancel saves nothing. The database stays modified and the file keeps its change.
+ */
+void TestGui::testCancelOnSaveConflict()
+{
+    // Hold off the file watcher, so that the save is the first to find the change on disk
+    auto* fileWatcher = m_db->findChild<FileWatcher*>();
+    QVERIFY(fileWatcher);
+    fileWatcher->pause();
+    QVERIFY(changeDatabaseFile(m_dbFilePath, [](Database* db) { addSyncTestEntry(db, "Added on disk"); }));
+    const QByteArray fileBefore = syncTestFileData(m_dbFilePath);
+    addSyncTestEntry(m_db.data(), "Added in memory");
+
+    QSignalSpy reloadEndSpy(m_dbWidget.data(), &DatabaseWidget::reloadEnd);
+    MessageBox::setNextAnswer(MessageBox::Cancel);
+    triggerAction("actionDatabaseSave");
+
+    QTRY_COMPARE(reloadEndSpy.count(), 1);
+    QVERIFY(m_db->isModified());
+    QVERIFY(!m_db->rootGroup()->findEntryByPath("Added on disk"));
+    QCOMPARE(syncTestFileData(m_dbFilePath), fileBefore);
 }
 
 void TestGui::prepareAndTriggerRemoteSync()

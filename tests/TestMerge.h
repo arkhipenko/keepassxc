@@ -56,6 +56,17 @@ private slots:
     void testDeletedGroup();
     void testDeletedRevertedEntry();
     void testDeletedRevertedGroup();
+    void testKeePassRulesDeletionsBothDirections();
+    void testKeePassRulesLatestDeletionTime();
+    void testKeePassRulesDeletionAtModificationTime();
+    void testKeePassRulesDatabaseProperties();
+    void testKeePassRulesRecycleBinAndTemplates();
+    void testKeePassRulesCustomData();
+    void testKeePassRulesPublicCustomData();
+    void testKeePassRulesCustomIcons();
+    void testKeePassRulesCustomIconDeletion();
+    void testKeePassRulesGroupProperties();
+    void testKeePassRulesOlderGroupUnchanged();
 
 private:
     Database* createTestDatabase();

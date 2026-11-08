@@ -1453,6 +1453,424 @@ void TestMerge::testMergeModified()
     QTRY_VERIFY(!modifiedSignalSpy.empty());
 }
 
+/**
+ * KeePass rules: a deletion in either database reaches the other one, when the merge is done in
+ * Synchronize mode. An entry deleted in the target does not come back from the source.
+ */
+void TestMerge::testKeePassRulesDeletionsBothDirections()
+{
+    QScopedPointer<Database> dbDestination(createTestDatabase());
+    QScopedPointer<Database> dbSource(
+        createTestDatabaseStructureClone(dbDestination.data(), Entry::CloneNoFlags, Group::CloneIncludeEntries));
+
+    m_clock->advanceSecond(1);
+    QPointer<Entry> entry1Source = dbSource->rootGroup()->findEntryByPath("group1/entry1");
+    QVERIFY(entry1Source);
+    const QUuid entry1Uuid = entry1Source->uuid();
+    delete entry1Source;
+
+    m_clock->advanceSecond(1);
+    QPointer<Entry> entry2Destination = dbDestination->rootGroup()->findEntryByPath("group1/entry2");
+    QVERIFY(entry2Destination);
+    const QUuid entry2Uuid = entry2Destination->uuid();
+    delete entry2Destination;
+
+    m_clock->advanceSecond(1);
+    Merger merger(dbSource.data(), dbDestination.data());
+    merger.setForcedMergeMode(Group::Synchronize);
+    merger.setKeePassRules(true);
+    merger.merge();
+
+    QVERIFY(!dbDestination->rootGroup()->findEntryByUuid(entry1Uuid));
+    QVERIFY(!dbDestination->rootGroup()->findEntryByUuid(entry2Uuid));
+    QVERIFY(dbDestination->containsDeletedObject(entry1Uuid));
+    QVERIFY(dbDestination->containsDeletedObject(entry2Uuid));
+    QCOMPARE(dbDestination->rootGroup()->entriesRecursive().size(), 0);
+}
+
+/**
+ * KeePass rules: when both databases have a deletion record for the same object, the latest
+ * deletion time is kept. Without the KeePass rules the earliest time is kept.
+ */
+void TestMerge::testKeePassRulesLatestDeletionTime()
+{
+    const QUuid uuid = QUuid::createUuid();
+    const QDateTime early = Clock::datetimeUtc(2010, 1, 1, 10, 0, 0);
+    const QDateTime late = Clock::datetimeUtc(2011, 1, 1, 10, 0, 0);
+
+    for (bool keepassRules : {true, false}) {
+        QScopedPointer<Database> dbDestination(createTestDatabase());
+        QScopedPointer<Database> dbSource(
+            createTestDatabaseStructureClone(dbDestination.data(), Entry::CloneNoFlags, Group::CloneIncludeEntries));
+        dbDestination->setDeletedObjects({{uuid, early}});
+        dbSource->setDeletedObjects({{uuid, late}});
+
+        Merger merger(dbSource.data(), dbDestination.data());
+        merger.setForcedMergeMode(Group::Synchronize);
+        merger.setKeePassRules(keepassRules);
+        merger.merge();
+
+        const auto deletions = dbDestination->deletedObjects();
+        QCOMPARE(deletions.size(), 1);
+        QCOMPARE(deletions.first().uuid, uuid);
+        QCOMPARE(deletions.first().deletionTime, keepassRules ? late : early);
+    }
+}
+
+/**
+ * KeePass rules: an object is deleted only when it was modified before its deletion time.
+ * An object modified at the deletion time itself is kept, and its deletion record is dropped.
+ */
+void TestMerge::testKeePassRulesDeletionAtModificationTime()
+{
+    QScopedPointer<Database> dbDestination(createTestDatabase());
+    QScopedPointer<Database> dbSource(
+        createTestDatabaseStructureClone(dbDestination.data(), Entry::CloneNoFlags, Group::CloneIncludeEntries));
+
+    Entry* entry1 = dbDestination->rootGroup()->findEntryByPath("group1/entry1");
+    QVERIFY(entry1);
+    const QUuid entry1Uuid = entry1->uuid();
+    dbSource->setDeletedObjects({{entry1Uuid, entry1->timeInfo().lastModificationTime()}});
+
+    Merger merger(dbSource.data(), dbDestination.data());
+    merger.setForcedMergeMode(Group::Synchronize);
+    merger.setKeePassRules(true);
+    merger.merge();
+
+    QVERIFY(dbDestination->rootGroup()->findEntryByUuid(entry1Uuid));
+    QVERIFY(!dbDestination->containsDeletedObject(entry1Uuid));
+}
+
+/**
+ * KeePass rules: database name, description and default user name are each taken from the
+ * database that changed them last. The color follows the settings changed time.
+ */
+void TestMerge::testKeePassRulesDatabaseProperties()
+{
+    QScopedPointer<Database> dbDestination(createTestDatabase());
+    QScopedPointer<Database> dbSource(
+        createTestDatabaseStructureClone(dbDestination.data(), Entry::CloneNoFlags, Group::CloneIncludeEntries));
+
+    auto* sourceMeta = dbSource->metadata();
+    auto* targetMeta = dbDestination->metadata();
+    const QDateTime t1 = Clock::datetimeUtc(2012, 1, 1, 0, 0, 0);
+    const QDateTime t2 = Clock::datetimeUtc(2013, 1, 1, 0, 0, 0);
+
+    // Name: the source is newer. Description: the target is newer.
+    sourceMeta->setName("source name");
+    sourceMeta->setNameChanged(t2);
+    targetMeta->setName("target name");
+    targetMeta->setNameChanged(t1);
+    sourceMeta->setDescription("source description");
+    sourceMeta->setDescriptionChanged(t1);
+    targetMeta->setDescription("target description");
+    targetMeta->setDescriptionChanged(t2);
+    sourceMeta->setDefaultUserName("source user");
+    sourceMeta->setDefaultUserNameChanged(t2);
+    targetMeta->setDefaultUserName("target user");
+    targetMeta->setDefaultUserNameChanged(t1);
+    sourceMeta->setColor("#FF0000");
+    sourceMeta->setSettingsChanged(t2);
+    targetMeta->setColor("#00FF00");
+    targetMeta->setSettingsChanged(t1);
+
+    Merger merger(dbSource.data(), dbDestination.data());
+    merger.setForcedMergeMode(Group::Synchronize);
+    merger.setKeePassRules(true);
+    merger.merge();
+
+    QCOMPARE(targetMeta->name(), QString("source name"));
+    QCOMPARE(targetMeta->nameChanged(), t2);
+    QCOMPARE(targetMeta->description(), QString("target description"));
+    QCOMPARE(targetMeta->descriptionChanged(), t2);
+    QCOMPARE(targetMeta->defaultUserName(), QString("source user"));
+    QCOMPARE(targetMeta->defaultUserNameChanged(), t2);
+    QCOMPARE(targetMeta->color(), QString("#FF0000"));
+    QCOMPARE(targetMeta->settingsChanged(), t2);
+
+    // Without the KeePass rules, none of these properties is merged
+    QScopedPointer<Database> dbDestination2(createTestDatabase());
+    dbDestination2->metadata()->setName("target name");
+    dbDestination2->metadata()->setNameChanged(t1);
+    Merger merger2(dbSource.data(), dbDestination2.data());
+    merger2.setForcedMergeMode(Group::Synchronize);
+    merger2.merge();
+    QCOMPARE(dbDestination2->metadata()->name(), QString("target name"));
+}
+
+/**
+ * KeePass rules: the recycle bin and the entry templates group are taken from the database that
+ * changed them last, when that group exists in the merged database.
+ */
+void TestMerge::testKeePassRulesRecycleBinAndTemplates()
+{
+    QScopedPointer<Database> dbDestination(createTestDatabase());
+    QScopedPointer<Database> dbSource(
+        createTestDatabaseStructureClone(dbDestination.data(), Entry::CloneNoFlags, Group::CloneIncludeEntries));
+
+    const QDateTime t1 = Clock::datetimeUtc(2012, 1, 1, 0, 0, 0);
+    const QDateTime t2 = Clock::datetimeUtc(2013, 1, 1, 0, 0, 0);
+
+    Group* sourceGroup2 = dbSource->rootGroup()->findChildByName("group2");
+    QVERIFY(sourceGroup2);
+    dbSource->metadata()->setRecycleBinEnabled(false);
+    dbSource->metadata()->setRecycleBin(sourceGroup2);
+    dbSource->metadata()->setRecycleBinChanged(t2);
+    dbSource->metadata()->setEntryTemplatesGroup(sourceGroup2);
+    dbSource->metadata()->setEntryTemplatesGroupChanged(t1);
+
+    Group* targetGroup1 = dbDestination->rootGroup()->findChildByName("group1");
+    QVERIFY(targetGroup1);
+    dbDestination->metadata()->setRecycleBinEnabled(true);
+    dbDestination->metadata()->setRecycleBin(targetGroup1);
+    dbDestination->metadata()->setRecycleBinChanged(t1);
+    dbDestination->metadata()->setEntryTemplatesGroup(targetGroup1);
+    dbDestination->metadata()->setEntryTemplatesGroupChanged(t2);
+
+    Merger merger(dbSource.data(), dbDestination.data());
+    merger.setForcedMergeMode(Group::Synchronize);
+    merger.setKeePassRules(true);
+    merger.merge();
+
+    auto* targetMeta = dbDestination->metadata();
+    QVERIFY(targetMeta->recycleBin());
+    QCOMPARE(targetMeta->recycleBin()->uuid(), sourceGroup2->uuid());
+    QVERIFY(!targetMeta->recycleBinEnabled());
+    QCOMPARE(targetMeta->recycleBinChanged(), t2);
+    QVERIFY(targetMeta->entryTemplatesGroup());
+    QCOMPARE(targetMeta->entryTemplatesGroup()->uuid(), targetGroup1->uuid());
+    QCOMPARE(targetMeta->entryTemplatesGroupChanged(), t2);
+}
+
+/**
+ * KeePass rules: database custom data is merged key by key, by the modification time of each key.
+ * No key is removed.
+ */
+void TestMerge::testKeePassRulesCustomData()
+{
+    QScopedPointer<Database> dbDestination(createTestDatabase());
+    QScopedPointer<Database> dbSource(
+        createTestDatabaseStructureClone(dbDestination.data(), Entry::CloneNoFlags, Group::CloneIncludeEntries));
+
+    const QDateTime t1 = Clock::datetimeUtc(2012, 1, 1, 0, 0, 0);
+    const QDateTime t2 = Clock::datetimeUtc(2013, 1, 1, 0, 0, 0);
+
+    auto* source = dbSource->metadata()->customData();
+    auto* target = dbDestination->metadata()->customData();
+    source->set("newerInSource", "source", t2);
+    target->set("newerInSource", "target", t1);
+    source->set("newerInTarget", "source", t1);
+    target->set("newerInTarget", "target", t2);
+    source->set("onlyInSource", "source", t1);
+    target->set("onlyInTarget", "target", t1);
+
+    Merger merger(dbSource.data(), dbDestination.data());
+    merger.setForcedMergeMode(Group::Synchronize);
+    merger.setKeePassRules(true);
+    merger.merge();
+
+    QCOMPARE(target->value("newerInSource"), QString("source"));
+    QCOMPARE(target->lastModified("newerInSource"), t2);
+    QCOMPARE(target->value("newerInTarget"), QString("target"));
+    QCOMPARE(target->value("onlyInSource"), QString("source"));
+    QCOMPARE(target->value("onlyInTarget"), QString("target"));
+}
+
+/**
+ * KeePass rules: public custom data is taken from the source when the source settings are newer.
+ * Otherwise only missing keys are added. The quick unlock UUID of the target is kept.
+ */
+void TestMerge::testKeePassRulesPublicCustomData()
+{
+    const QDateTime t1 = Clock::datetimeUtc(2012, 1, 1, 0, 0, 0);
+    const QDateTime t2 = Clock::datetimeUtc(2013, 1, 1, 0, 0, 0);
+    const QByteArray targetUuid = QUuid::createUuid().toRfc4122();
+
+    for (bool sourceNewer : {true, false}) {
+        QScopedPointer<Database> dbDestination(createTestDatabase());
+        QScopedPointer<Database> dbSource(
+            createTestDatabaseStructureClone(dbDestination.data(), Entry::CloneNoFlags, Group::CloneIncludeEntries));
+
+        dbSource->setPublicCustomData(
+            {{"KPXC_PUBLIC_UUID", QUuid::createUuid().toRfc4122()}, {"shared", "source"}, {"onlyInSource", "source"}});
+        dbDestination->setPublicCustomData({{"KPXC_PUBLIC_UUID", targetUuid}, {"shared", "target"}});
+        dbSource->metadata()->setSettingsChanged(sourceNewer ? t2 : t1);
+        dbDestination->metadata()->setSettingsChanged(sourceNewer ? t1 : t2);
+
+        Merger merger(dbSource.data(), dbDestination.data());
+        merger.setForcedMergeMode(Group::Synchronize);
+        merger.setKeePassRules(true);
+        merger.merge();
+
+        const auto& data = dbDestination->publicCustomData();
+        QCOMPARE(data.value("KPXC_PUBLIC_UUID").toByteArray(), targetUuid);
+        QCOMPARE(data.value("shared").toString(), QString(sourceNewer ? "source" : "target"));
+        QCOMPARE(data.value("onlyInSource").toString(), QString("source"));
+    }
+}
+
+/**
+ * KeePass rules: a custom icon that exists in both databases is replaced when the source icon
+ * was modified later. A missing icon is added.
+ */
+void TestMerge::testKeePassRulesCustomIcons()
+{
+    QScopedPointer<Database> dbDestination(createTestDatabase());
+    QScopedPointer<Database> dbSource(
+        createTestDatabaseStructureClone(dbDestination.data(), Entry::CloneNoFlags, Group::CloneIncludeEntries));
+
+    const QDateTime t1 = Clock::datetimeUtc(2012, 1, 1, 0, 0, 0);
+    const QDateTime t2 = Clock::datetimeUtc(2013, 1, 1, 0, 0, 0);
+    const QUuid newerInSource = QUuid::createUuid();
+    const QUuid newerInTarget = QUuid::createUuid();
+    const QUuid onlyInSource = QUuid::createUuid();
+
+    dbSource->metadata()->addCustomIcon(newerInSource, QByteArray("source A"), "A", t2);
+    dbDestination->metadata()->addCustomIcon(newerInSource, QByteArray("target A"), "A", t1);
+    dbSource->metadata()->addCustomIcon(newerInTarget, QByteArray("source B"), "B", t1);
+    dbDestination->metadata()->addCustomIcon(newerInTarget, QByteArray("target B"), "B", t2);
+    dbSource->metadata()->addCustomIcon(onlyInSource, QByteArray("source C"), "C", t1);
+
+    Merger merger(dbSource.data(), dbDestination.data());
+    merger.setForcedMergeMode(Group::Synchronize);
+    merger.setKeePassRules(true);
+    merger.merge();
+
+    auto* targetMeta = dbDestination->metadata();
+    QCOMPARE(targetMeta->customIcon(newerInSource).data, QByteArray("source A"));
+    QCOMPARE(targetMeta->customIcon(newerInSource).lastModified, t2);
+    QCOMPARE(targetMeta->findCustomIcon(QByteArray("source A")), newerInSource);
+    QCOMPARE(targetMeta->customIcon(newerInTarget).data, QByteArray("target B"));
+    QVERIFY(targetMeta->hasCustomIcon(onlyInSource));
+}
+
+/**
+ * KeePass rules: a custom icon with a deletion record is removed, unless it was modified after the
+ * deletion. References to a removed icon are cleared.
+ */
+void TestMerge::testKeePassRulesCustomIconDeletion()
+{
+    QScopedPointer<Database> dbDestination(createTestDatabase());
+    QScopedPointer<Database> dbSource(
+        createTestDatabaseStructureClone(dbDestination.data(), Entry::CloneNoFlags, Group::CloneIncludeEntries));
+
+    const QDateTime t1 = Clock::datetimeUtc(2012, 1, 1, 0, 0, 0);
+    const QDateTime t2 = Clock::datetimeUtc(2013, 1, 1, 0, 0, 0);
+    const QDateTime t3 = Clock::datetimeUtc(2014, 1, 1, 0, 0, 0);
+    const QUuid deletedIcon = QUuid::createUuid();
+    const QUuid keptIcon = QUuid::createUuid();
+
+    dbDestination->metadata()->addCustomIcon(deletedIcon, QByteArray("deleted"), "D", t1);
+    dbDestination->metadata()->addCustomIcon(keptIcon, QByteArray("kept"), "K", t3);
+    Entry* entry1 = dbDestination->rootGroup()->findEntryByPath("group1/entry1");
+    QVERIFY(entry1);
+    const QDateTime entryModified = entry1->timeInfo().lastModificationTime();
+    entry1->setUpdateTimeinfo(false);
+    entry1->setIcon(deletedIcon);
+    entry1->setUpdateTimeinfo(true);
+
+    // The source deleted both icons at t2; the kept icon was modified after that in the target
+    dbSource->setDeletedObjects({{deletedIcon, t2}, {keptIcon, t2}});
+
+    Merger merger(dbSource.data(), dbDestination.data());
+    merger.setForcedMergeMode(Group::Synchronize);
+    merger.setKeePassRules(true);
+    merger.merge();
+
+    QVERIFY(!dbDestination->metadata()->hasCustomIcon(deletedIcon));
+    QVERIFY(dbDestination->containsDeletedObject(deletedIcon));
+    QVERIFY(dbDestination->metadata()->hasCustomIcon(keptIcon));
+    QVERIFY(!dbDestination->containsDeletedObject(keptIcon));
+    QVERIFY(entry1->iconUuid().isNull());
+    QCOMPARE(entry1->timeInfo().lastModificationTime(), entryModified);
+}
+
+/**
+ * KeePass rules: when the source group is newer, all its properties are copied, including tags,
+ * custom data and the auto-type and search settings. The location is not copied.
+ */
+void TestMerge::testKeePassRulesGroupProperties()
+{
+    QScopedPointer<Database> dbDestination(createTestDatabase());
+    QScopedPointer<Database> dbSource(
+        createTestDatabaseStructureClone(dbDestination.data(), Entry::CloneNoFlags, Group::CloneIncludeEntries));
+
+    Group* targetGroup = dbDestination->rootGroup()->findChildByName("group1");
+    QVERIFY(targetGroup);
+    const QDateTime targetLocationChanged = targetGroup->timeInfo().locationChanged();
+
+    m_clock->advanceSecond(10);
+    Group* sourceGroup = dbSource->rootGroup()->findChildByName("group1");
+    QVERIFY(sourceGroup);
+    sourceGroup->setName("renamed");
+    sourceGroup->setNotes("notes");
+    sourceGroup->setTags("tag1;tag2");
+    sourceGroup->setDefaultAutoTypeSequence("{USERNAME}");
+    sourceGroup->setAutoTypeEnabled(Group::Disable);
+    sourceGroup->setSearchingEnabled(Group::Disable);
+    sourceGroup->customData()->set("groupKey", "groupValue");
+    const QDateTime sourceModified = sourceGroup->timeInfo().lastModificationTime();
+
+    m_clock->advanceSecond(1);
+    Merger merger(dbSource.data(), dbDestination.data());
+    merger.setForcedMergeMode(Group::Synchronize);
+    merger.setKeePassRules(true);
+    merger.merge();
+
+    QCOMPARE(targetGroup->name(), QString("renamed"));
+    QCOMPARE(targetGroup->notes(), QString("notes"));
+    QCOMPARE(targetGroup->tags(), QString("tag1;tag2"));
+    QCOMPARE(targetGroup->defaultAutoTypeSequence(), QString("{USERNAME}"));
+    QCOMPARE(targetGroup->autoTypeEnabled(), Group::Disable);
+    QCOMPARE(targetGroup->searchingEnabled(), Group::Disable);
+    QCOMPARE(targetGroup->customData()->value("groupKey"), QString("groupValue"));
+    QCOMPARE(targetGroup->timeInfo().lastModificationTime(), sourceModified);
+    QCOMPARE(targetGroup->timeInfo().locationChanged(), targetLocationChanged);
+
+    // Without the KeePass rules, tags and custom data are not copied
+    QScopedPointer<Database> dbDestination2(
+        createTestDatabaseStructureClone(dbDestination.data(), Entry::CloneNoFlags, Group::CloneIncludeEntries));
+    Group* targetGroup2 = dbDestination2->rootGroup()->findChildByName("renamed");
+    QVERIFY(targetGroup2);
+    targetGroup2->setUpdateTimeinfo(false);
+    targetGroup2->setTags("");
+    targetGroup2->customData()->clear();
+    TimeInfo timeInfo = targetGroup2->timeInfo();
+    timeInfo.setLastModificationTime(Clock::datetimeUtc(2000, 1, 1, 0, 0, 0));
+    targetGroup2->setTimeInfo(timeInfo);
+    Merger merger2(dbSource.data(), dbDestination2.data());
+    merger2.merge();
+    QCOMPARE(targetGroup2->tags(), QString(""));
+    QVERIFY(!targetGroup2->customData()->contains("groupKey"));
+}
+
+/**
+ * KeePass rules: an older source group does not change the target group.
+ */
+void TestMerge::testKeePassRulesOlderGroupUnchanged()
+{
+    QScopedPointer<Database> dbDestination(createTestDatabase());
+    QScopedPointer<Database> dbSource(
+        createTestDatabaseStructureClone(dbDestination.data(), Entry::CloneNoFlags, Group::CloneIncludeEntries));
+
+    Group* sourceGroup = dbSource->rootGroup()->findChildByName("group1");
+    QVERIFY(sourceGroup);
+    sourceGroup->setUpdateTimeinfo(false);
+    sourceGroup->setName("old name");
+    TimeInfo timeInfo = sourceGroup->timeInfo();
+    timeInfo.setLastModificationTime(Clock::datetimeUtc(2000, 1, 1, 0, 0, 0));
+    sourceGroup->setTimeInfo(timeInfo);
+
+    Merger merger(dbSource.data(), dbDestination.data());
+    merger.setForcedMergeMode(Group::Synchronize);
+    merger.setKeePassRules(true);
+    const auto changes = merger.merge();
+
+    QVERIFY(dbDestination->rootGroup()->findChildByName("group1"));
+    QVERIFY(!dbDestination->rootGroup()->findChildByName("old name"));
+    QVERIFY(changes.isEmpty());
+}
+
 Database* TestMerge::createTestDatabase()
 {
     auto db = new Database();

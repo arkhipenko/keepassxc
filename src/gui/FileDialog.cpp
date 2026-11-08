@@ -135,6 +135,11 @@ void FileDialog::setNextFileName(const QString& fileName)
     m_nextFileName = fileName;
 }
 
+void FileDialog::setNextFileNames(const QStringList& fileNames)
+{
+    m_nextFileNames = fileNames;
+}
+
 void FileDialog::setNextDirectory(const QString& path)
 {
     m_nextDirName = path;

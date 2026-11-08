@@ -245,6 +245,7 @@ MainWindow::MainWindow()
     connect(m_clearHistoryAction, SIGNAL(triggered()), this, SLOT(clearLastDatabases()));
     connect(m_lastDatabasesActions, SIGNAL(triggered(QAction*)), this, SLOT(openRecentDatabase(QAction*)));
     connect(m_ui->menuRecentDatabases, SIGNAL(aboutToShow()), this, SLOT(updateLastDatabasesMenu()));
+    connect(m_ui->menuSynchronizeRecent, &QMenu::aboutToShow, this, &MainWindow::updateSynchronizeRecentMenu);
 
     m_copyAdditionalAttributeActions = new QActionGroup(m_ui->menuEntryCopyAttribute);
     m_actionMultiplexer.connect(
@@ -338,6 +339,8 @@ MainWindow::MainWindow()
     m_ui->actionLockAllDatabases->setIcon(icons()->icon("database-lock-all"));
     m_ui->actionQuit->setIcon(icons()->icon("application-exit"));
     m_ui->actionDatabaseMerge->setIcon(icons()->icon("database-merge"));
+    m_ui->menuSynchronize->setIcon(icons()->icon("database-merge"));
+    m_ui->menuSynchronizeRecent->setIcon(icons()->icon("document-open-recent"));
     m_ui->menuRemoteSync->setIcon(icons()->icon("remote-sync"));
     m_ui->actionImport->setIcon(icons()->icon("document-import"));
     m_ui->menuExport->setIcon(icons()->icon("document-export"));
@@ -452,6 +455,9 @@ MainWindow::MainWindow()
     connect(m_ui->actionDatabaseSaveBackup, SIGNAL(triggered()), m_ui->tabWidget, SLOT(saveDatabaseBackup()));
     connect(m_ui->actionDatabaseClose, SIGNAL(triggered()), m_ui->tabWidget, SLOT(closeCurrentDatabaseTab()));
     connect(m_ui->actionDatabaseMerge, SIGNAL(triggered()), m_ui->tabWidget, SLOT(mergeDatabase()));
+    connect(m_ui->actionDatabaseSynchronize, &QAction::triggered, m_ui->tabWidget, [this] {
+        m_ui->tabWidget->synchronizeDatabase();
+    });
     connect(m_ui->actionDatabaseSettings, SIGNAL(toggled(bool)), m_ui->tabWidget, SLOT(showDatabaseSettings(bool)));
     connect(m_ui->actionDatabaseSecurity, SIGNAL(triggered()), m_ui->tabWidget, SLOT(showDatabaseSecurity()));
     connect(m_ui->actionReports, SIGNAL(toggled(bool)), m_ui->tabWidget, SLOT(showDatabaseReports(bool)));
@@ -748,6 +754,27 @@ void MainWindow::updateLastDatabasesMenu()
     m_ui->menuRecentDatabases->addAction(m_clearHistoryAction);
 }
 
+/**
+ * Database > Synchronize > Recent: the recent databases list. Selecting an item synchronizes
+ * the current database with that file, as KeePass does.
+ */
+void MainWindow::updateSynchronizeRecentMenu()
+{
+    m_ui->menuSynchronizeRecent->clear();
+
+    const QStringList lastDatabases = config()->get(Config::LastDatabases).toStringList();
+    for (const QString& database : lastDatabases) {
+        QAction* action = m_ui->menuSynchronizeRecent->addAction(Tools::escapeAccelerators(database));
+        connect(action, &QAction::triggered, m_ui->tabWidget, [this, database] {
+            m_ui->tabWidget->synchronizeDatabase(QStringList{database});
+        });
+    }
+    if (lastDatabases.isEmpty()) {
+        auto action = m_ui->menuSynchronizeRecent->addAction(tr("No recent databases"));
+        action->setEnabled(false);
+    }
+}
+
 void MainWindow::updateCopyAttributesMenu()
 {
     DatabaseWidget* dbWidget = m_ui->tabWidget->currentDatabaseWidget();
@@ -1001,6 +1028,8 @@ void MainWindow::updateMenuActionState()
     m_ui->menuRemoteSync->setEnabled(inDatabase || inDatabaseSettings);
     m_ui->menuExport->setEnabled(inDatabase);
     m_ui->actionDatabaseMerge->setEnabled(inDatabase);
+    m_ui->menuSynchronize->setEnabled(inDatabase);
+    m_ui->actionDatabaseSynchronize->setEnabled(inDatabase);
 #ifdef KPXC_FEATURE_BROWSER
     m_ui->actionPasskeys->setEnabled(inDatabase || inReports);
     m_ui->actionImportPasskey->setEnabled(inDatabase);
@@ -2074,6 +2103,7 @@ void MainWindow::initActionCollection()
                     m_ui->actionReports,
                     m_ui->actionPasskeys,
                     m_ui->actionDatabaseMerge,
+                    m_ui->actionDatabaseSynchronize,
                     m_ui->actionImportPasskey,
                     m_ui->actionImportCsv,
                     m_ui->actionImportOpVault,

@@ -25,6 +25,7 @@ set(core_SOURCES
         core/Config.cpp
         core/CustomData.cpp
         core/Database.cpp
+        core/DatabaseSync.cpp
         core/DatabaseStats.cpp
         core/Entry.cpp
         core/EntryAttachments.cpp

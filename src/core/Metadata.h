@@ -137,6 +137,8 @@ public:
                        const QByteArray& iconBytes,
                        const QString& name = {},
                        const QDateTime& lastModified = {});
+    // Replace the data of an existing custom icon, without a deletion record for the old data
+    void updateCustomIcon(const QUuid& uuid, const CustomIconData& iconData);
     void removeCustomIcon(const QUuid& uuid);
     void copyCustomIcons(const QSet<QUuid>& iconList, const Metadata* otherMetadata);
     QUuid findCustomIcon(const QByteArray& candidate);

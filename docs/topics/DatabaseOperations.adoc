@@ -317,7 +317,42 @@ The following tables lists a few samples search queries for your reference:
 === Merging Databases
 KeePassXC allows you to merge entries from one database into another through the _Database_ -> _Merge From Database_ menu item. When merging, entries from the specified database will be imported into your currently open database. The merge process compares entries based on their unique identifiers (UUIDs) and modified timestamp. When an entry UUID matches, no matter which group it is in, the most recently modified version will be made the current and the previous version will be placed into the entry's history. Any new entries and/or groups will be added to the open database. This feature is useful for consolidating multiple databases or synchronizing databases from conflict files in a cloud storage system.
 
-NOTE: When you delete entries, a record of that deletion (the entry UUID) is stored to prevent that entry from reappearing from a merge operation. An existing entry that has the same UUID as a deleted item will be removed from the database without prompt.
+NOTE: When you delete an entry, KeePassXC keeps a record of that deletion (the entry UUID and the deletion time). _Merge From Database_ does not apply these records. An entry that you deleted in one database comes back when you merge the other database into it. To also apply deletions, use _Database_ -> _Synchronize_ (see <<Synchronizing Databases, Synchronizing Databases>>).
+
+=== Synchronizing Databases
+Use _Database_ -> _Synchronize_ to keep two or more copies of a database the same, for example a copy on your computer and a copy on a USB drive. This feature works as _File_ -> _Synchronize_ in KeePass 2.x.
+
+* _Synchronize with File..._ opens a file dialog. You can select one or more database files.
+* _Recent_ shows the list of recent databases. Select a database to synchronize with it.
+
+KeePassXC does these steps:
+
+1. It opens each selected file with the key of the open database (the password, the key file and the hardware key together). It does not show an unlock dialog. If a file does not open with this key, the synchronization fails. Both databases must use the same key.
+2. It merges each file into the open database. This merge applies deletions. An entry or a group that you deleted in one database is also deleted in the other database, unless it was changed after the deletion.
+3. If one file fails, KeePassXC saves nothing and copies nothing. The data that it merged from the other files stays in the open database as unsaved changes.
+4. If all files succeed, KeePassXC saves the open database. Then it copies the saved file over each selected file. After this step, all the files are the same.
+
+The copy uses the save mode that you set in _File Operations_ (see <<Advanced Save Options, Advanced Save Options>>). The copy also gives the other files the encryption settings and the file format version of the open database. KeePassXC adds each synchronized file to the list of recent databases.
+
+You must save a new database to a file before you can synchronize it.
+
+The synchronization uses the merge rules of KeePass:
+
+* *Entries*: the same rules as _Merge From Database_.
+* *Groups*: when a group in the other file is not older, KeePassXC copies all its properties, including tags and custom data. The location of the group is not copied.
+* *Deletions*: when both databases deleted the same object, KeePassXC keeps the latest deletion time. An object is deleted only when it was changed before the deletion time.
+* *Database name, description, default user name, color, recycle bin and templates group*: KeePassXC takes each one from the database that changed it last.
+* *Custom icons*: KeePassXC adds a missing icon. An icon that was changed later in the other file replaces the icon. A deleted icon is removed, unless it was changed after the deletion. Entries and groups that used a removed icon get their standard icon.
+* *Database custom data*: KeePassXC takes each item from the database that changed it last. It does not remove items.
+
+==== Save Conflicts
+When KeePassXC saves a database, it checks if the file changed on disk after the database was loaded. If the file changed, KeePassXC asks what to do:
+
+* _Synchronize_ (default): KeePassXC loads the file on disk, merges it into the database in memory with the rules above, and then saves. The changes on both sides are kept.
+* _Overwrite_: KeePassXC saves the database in memory over the file. The changes in the file on disk are lost.
+* _Cancel_: KeePassXC does not save. The database stays modified.
+
+NOTE: KeePassXC also watches the database file. When it finds a change on disk before you save, it shows a different question, with _Merge_, _Ignore_, _Discard_ and _Cancel_. That merge does not apply deletions.
 
 === Advanced Save Options
 There are three ways that KeePassXC can handle database files. This behavior is set in the Application Settings under _File Operations_.

@@ -135,6 +135,7 @@ private slots:
     void openRecentDatabase(QAction* action);
     void clearLastDatabases();
     void updateLastDatabasesMenu();
+    void updateSynchronizeRecentMenu();
     void updateCopyAttributesMenu();
     void updateSetTagsMenu();
     void showEntryContextMenu(const QPoint& globalPos);

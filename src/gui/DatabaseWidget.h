@@ -129,6 +129,7 @@ public:
     void setSearchStringForAutoType(const QString& search);
 
     void syncWithRemote(const RemoteParams* params);
+    bool synchronizeWithFiles(const QStringList& filePaths);
     void syncDatabaseWithLockedDatabase(const QString& filePath, const RemoteParams* params);
     QList<RemoteParams*> getRemoteParams() const;
 
@@ -160,6 +161,9 @@ signals:
     void databaseSyncUnlocked(const RemoteHandler::RemoteResult& result);
     void unlockDatabaseInDialogForSync(const QString& filePath);
     void updateSyncProgress(int percentage, QString message);
+    // Database synchronization with files (KeePass "File > Synchronize"), emitted before and after it
+    void databaseSynchronizing();
+    void databaseSynchronized(bool success);
     void groupContextMenuRequested(const QPoint& globalPos);
     void entryContextMenuRequested(const QPoint& globalPos);
     void listModeAboutToActivate();
@@ -331,6 +335,9 @@ private:
     QUuid m_entryBeforeLock;
 
     int m_saveAttempts;
+    QString m_lastSaveError;
+
+    static QString sameKeyHint();
     bool m_attemptingLock = false;
 
     QScopedPointer<RemoteSettings> m_remoteSettings;

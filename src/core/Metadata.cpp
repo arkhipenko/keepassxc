@@ -393,6 +393,24 @@ void Metadata::addCustomIcon(const QUuid& uuid,
     addCustomIcon(uuid, {iconBytes, name, lastModified});
 }
 
+void Metadata::updateCustomIcon(const QUuid& uuid, const CustomIconData& iconData)
+{
+    Q_ASSERT(m_customIcons.contains(uuid));
+    if (!m_customIcons.contains(uuid)) {
+        return;
+    }
+
+    // Remove the old hash record only if it belongs to this icon
+    QByteArray oldHash = hashIcon(m_customIcons[uuid].data);
+    if (m_customIconsHashes.value(oldHash) == uuid) {
+        m_customIconsHashes.remove(oldHash);
+    }
+
+    m_customIcons[uuid] = iconData;
+    m_customIconsHashes[hashIcon(iconData.data)] = uuid;
+    emitModified();
+}
+
 void Metadata::removeCustomIcon(const QUuid& uuid)
 {
     Q_ASSERT(!uuid.isNull());

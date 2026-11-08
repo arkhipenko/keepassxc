@@ -245,6 +245,18 @@
      </property>
      <addaction name="separator"/>
     </widget>
+    <widget class="QMenu" name="menuSynchronize">
+     <property name="title">
+      <string>Synchroni&amp;ze</string>
+     </property>
+     <widget class="QMenu" name="menuSynchronizeRecent">
+      <property name="title">
+       <string>&amp;Recent</string>
+      </property>
+     </widget>
+     <addaction name="actionDatabaseSynchronize"/>
+     <addaction name="menuSynchronizeRecent"/>
+    </widget>
     <addaction name="actionDatabaseNew"/>
     <addaction name="actionDatabaseOpen"/>
     <addaction name="menuRecentDatabases"/>
@@ -264,6 +276,7 @@
     <addaction name="actionImportPasskey"/>
     <addaction name="separator"/>
     <addaction name="actionDatabaseMerge"/>
+    <addaction name="menuSynchronize"/>
     <addaction name="menuRemoteSync"/>
     <addaction name="actionImport"/>
     <addaction name="menuExport"/>
@@ -525,6 +538,14 @@
    </property>
    <property name="toolTip">
     <string>Merge From Database</string>
+   </property>
+  </action>
+  <action name="actionDatabaseSynchronize">
+   <property name="text">
+    <string>Synchronize with &amp;File…</string>
+   </property>
+   <property name="toolTip">
+    <string>Synchronize with File</string>
    </property>
   </action>
   <action name="actionEntryNew">

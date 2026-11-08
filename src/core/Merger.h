@@ -32,6 +32,10 @@ public:
     void setForcedMergeMode(Group::MergeMode mode);
     void resetForcedMergeMode();
     void setSkipDatabaseCustomData(bool state);
+    // Use the merge rules of KeePass 2.x "File > Synchronize" (latest deletion time,
+    // database properties, custom icons, custom data per key, all group properties).
+    // Only the database synchronization sets this option.
+    void setKeePassRules(bool state);
 
     class Change
     {
@@ -99,6 +103,12 @@ private:
     void eraseGroup(Group* group);
     ChangeList resolveEntryConflict(const MergeContext& context, const Entry* existingEntry, Entry* otherEntry);
     ChangeList resolveGroupConflict(const MergeContext& context, const Group* existingGroup, Group* otherGroup);
+    ChangeList resolveGroupConflictKeePass(const MergeContext& context, const Group* sourceGroup, Group* targetGroup);
+    ChangeList mergeMetadataKeePass(const MergeContext& context);
+    ChangeList mergeCustomIconsKeePass(const MergeContext& context);
+    ChangeList mergeCustomDataKeePass(const MergeContext& context, bool sourceSettingsNewer);
+    ChangeList mergePublicCustomDataKeePass(const MergeContext& context, bool sourceSettingsNewer);
+    bool canApplyDeletion(const QDateTime& lastModification, const QDateTime& deletionTime) const;
     Merger::ChangeList resolveEntryConflict_MergeHistories(const MergeContext& context,
                                                            const Entry* sourceEntry,
                                                            Entry* targetEntry,
@@ -108,6 +118,7 @@ private:
     MergeContext m_context;
     Group::MergeMode m_mode;
     bool m_skipCustomData = false;
+    bool m_keepassRules = false;
     bool m_dryRun = false;
 };
 

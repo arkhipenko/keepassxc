@@ -33,6 +33,7 @@
 
 #include "autotype/AutoType.h"
 #include "core/AsyncTask.h"
+#include "core/DatabaseSync.h"
 #include "core/EntrySearcher.h"
 #include "core/Merger.h"
 #include "core/Tools.h"
@@ -40,6 +41,7 @@
 #include "gui/CloneDialog.h"
 #include "gui/DatabaseOpenDialog.h"
 #include "gui/DatabaseOpenWidget.h"
+#include "gui/DatabaseTabWidget.h"
 #include "gui/EntryPreviewWidget.h"
 #include "gui/FileDialog.h"
 #include "gui/GuiTools.h"
@@ -71,6 +73,21 @@
 #ifdef KPXC_FEATURE_BROWSER
 #include "gui/passkeys/PasskeyImporter.h"
 #endif
+
+namespace
+{
+    // Save mode for database files, from the application settings
+    Database::SaveAction configuredSaveAction()
+    {
+        if (config()->get(Config::UseAtomicSaves).toBool()) {
+            return Database::Atomic;
+        }
+        if (config()->get(Config::UseDirectWriteSaves).toBool()) {
+            return Database::DirectWrite;
+        }
+        return Database::TempFile;
+    }
+} // namespace
 
 DatabaseWidget::DatabaseWidget(QSharedPointer<Database> db, QWidget* parent)
     : QStackedWidget(parent)
@@ -1466,6 +1483,99 @@ bool DatabaseWidget::syncWithDatabase(const QSharedPointer<Database>& otherDb, Q
     return true;
 }
 
+QString DatabaseWidget::sameKeyHint()
+{
+    return tr("Make sure that both databases use the same key (password, key file and hardware key). "
+              "This is required for a synchronization.");
+}
+
+/**
+ * Synchronize the open database with other database files, as KeePass 2.x "File > Synchronize" does
+ * (KeePass/DataExchange/ImportUtil.cs):
+ * 1. Each file is opened with the key of the open database. A file with a different key fails.
+ * 2. Each file is merged into the open database in Synchronize mode with the KeePass merge rules.
+ * 3. If any file failed, nothing is saved and nothing is copied. The merged data stays in memory.
+ * 4. Otherwise the open database is saved, and the saved file is copied over each other file.
+ *
+ * @return true when all files were synchronized
+ */
+bool DatabaseWidget::synchronizeWithFiles(const QStringList& filePaths)
+{
+    if (!m_db || isLocked() || filePaths.isEmpty()) {
+        return false;
+    }
+    if (m_db->filePath().isEmpty()) {
+        showErrorMessage(tr("Save the database to a file before you synchronize it."));
+        return false;
+    }
+    if (m_reloading || isSaving()) {
+        showErrorMessage(tr("Synchronization failed: the database is being saved or reloaded. Try again."));
+        return false;
+    }
+
+    emit databaseSynchronizing();
+    hideMessage();
+    emit updateSyncProgress(0, tr("Synchronizing…"));
+
+    // The merges run without a return to the event loop, so no KeeShare import can run between them
+    QStringList mergedFiles;
+    QStringList errors;
+    for (const auto& filePath : filePaths) {
+        QString error;
+        const auto status = DatabaseSync::mergeFile(m_db.data(), filePath, &error);
+        if (status == DatabaseSync::MergeStatus::Merged) {
+            mergedFiles << filePath;
+            continue;
+        }
+        QString message = QString("%1: %2").arg(QDir::toNativeSeparators(filePath), error);
+        if (status == DatabaseSync::MergeStatus::OpenError) {
+            message += "\n" + sameKeyHint();
+        }
+        errors << message;
+    }
+
+    bool success = errors.isEmpty();
+    if (success) {
+        emit updateSyncProgress(50, tr("Synchronizing…"));
+        // The database is always saved, also when the merge changed nothing
+        success = save();
+        if (!success) {
+            errors << tr("Writing the database failed: %1").arg(m_lastSaveError);
+        }
+    }
+
+    if (success) {
+        // Copy the saved file over each other file, so that all files are the same
+        const QString savedFile = m_db->filePath();
+        for (const auto& filePath : asConst(mergedFiles)) {
+            if (DatabaseSync::isSameFile(filePath, savedFile)) {
+                continue;
+            }
+            QString error;
+            if (!DatabaseSync::copyFile(savedFile, filePath, configuredSaveAction(), &error)) {
+                errors << tr("Writing the database failed: %1")
+                              .arg(QString("%1: %2").arg(QDir::toNativeSeparators(filePath), error));
+                success = false;
+                continue;
+            }
+            DatabaseTabWidget::addToLastDatabases(filePath);
+        }
+    }
+
+    emit updateSyncProgress(-1, "");
+    if (success) {
+        showMessage(tr("Synchronization completed successfully."), MessageWidget::Positive);
+    } else {
+        showMessage(QString("%1\n%2").arg(tr("Synchronization failed."), errors.join("\n")),
+                    MessageWidget::Error,
+                    true,
+                    MessageWidget::DisableAutoHide);
+    }
+
+    emit databaseSynchronized(success);
+    return success;
+}
+
 /**
  * Unlock the database.
  *
@@ -2240,7 +2350,8 @@ void DatabaseWidget::reloadDatabaseFile(bool triggeredBySave)
     };
 
     auto db = QSharedPointer<Database>::create(m_db->filePath());
-    bool openResult = db->open(database()->key());
+    QString openError;
+    bool openResult = db->open(database()->key(), &openError);
 
     // skip if the db is unchanged, or the db file is gone or for sure not a kp-db
     if (bool sameHash = db->fileBlockHash() == m_db->fileBlockHash() || db->fileBlockHash().isEmpty()) {
@@ -2253,9 +2364,77 @@ void DatabaseWidget::reloadDatabaseFile(bool triggeredBySave)
         return;
     }
 
+    if (triggeredBySave) {
+        // A save found the file changed on disk. Ask as KeePass does
+        // (KeePass/Forms/MainForm_Functions.cs, AskIfSynchronizeInstead).
+        emit updateSyncProgress(50, tr("Reload pending user action…"));
+        auto message = tr("The database file \"%1\" has changed on disk since it was loaded. "
+                          "Probably someone else has edited and saved the database.<br><br>"
+                          "Overwrite the existing file?<br><br>"
+                          "Synchronize: load the file on disk, merge it with the current database in memory, "
+                          "then save.<br>"
+                          "Overwrite: save the current database to the file. "
+                          "Changes made by the other user will be lost.<br>"
+                          "Cancel: do not save.")
+                           .arg(displayFileName());
+        auto result = MessageBox::question(this,
+                                           tr("Save database"),
+                                           message,
+                                           MessageBox::Synchronize | MessageBox::Overwrite | MessageBox::Cancel,
+                                           MessageBox::Synchronize);
+        switch (result) {
+        case MessageBox::Synchronize: {
+            emit databaseSynchronizing();
+            if (!openResult) {
+                // KeePass refuses a synchronization with a file that has a different key
+                reloadCanceled();
+                showMessage(QString("%1\n%2: %3\n%4")
+                                .arg(tr("Synchronization failed."), displayFilePath(), openError, sameKeyHint()),
+                            MessageWidget::Error,
+                            true,
+                            MessageWidget::DisableAutoHide);
+                emit databaseSynchronized(false);
+                return;
+            }
+
+            // Merge the file on disk into the database in memory, then save over the file
+            Merger merger(db.data(), m_db.data());
+            merger.setForcedMergeMode(Group::Synchronize);
+            merger.setKeePassRules(true);
+            merger.merge();
+
+            m_blockAutoSave = false;
+            reloadFinish();
+            m_db->setIgnoreFileChangesUntilSaved(true);
+            const bool success = save();
+            if (success) {
+                showMessage(tr("Synchronization completed successfully."), MessageWidget::Positive);
+            } else {
+                showMessage(QString("%1\n%2").arg(tr("Synchronization failed."),
+                                                  tr("Writing the database failed: %1").arg(m_lastSaveError)),
+                            MessageWidget::Error,
+                            true,
+                            MessageWidget::DisableAutoHide);
+            }
+            emit databaseSynchronized(success);
+            return;
+        }
+        case MessageBox::Overwrite:
+            m_db->setIgnoreFileChangesUntilSaved(true);
+            m_blockAutoSave = false;
+            reloadFinish(false);
+            save();
+            emit updateSyncProgress(100, tr("Database file overwritten."));
+            return;
+        default:
+            reloadCanceled();
+            return;
+        }
+    }
+
     bool merge = false;
     QString changesActionStr;
-    if (triggeredBySave || m_db->isModified() || m_db->hasNonDataChanges()) {
+    if (m_db->isModified() || m_db->hasNonDataChanges()) {
         emit updateSyncProgress(50, tr("Reload pending user action…"));
 
         // Ask how to proceed
@@ -2266,32 +2445,16 @@ void DatabaseWidget::reloadDatabaseFile(bool triggeredBySave)
                           "Discard unsaved changes")
                            .arg(displayFileName());
         auto buttons = MessageBox::Merge | MessageBox::Discard | MessageBox::Ignore | MessageBox::Cancel;
-        // Different message if we are attempting to save
-        if (triggeredBySave) {
-            message = tr("The database file \"%1\" was modified externally.<br>"
-                         "How would you like to proceed?<br><br>"
-                         "Merge all changes then save<br>"
-                         "Overwrite the changes on disk<br>"
-                         "Discard unsaved changes")
-                          .arg(displayFileName());
-            buttons = MessageBox::Merge | MessageBox::Discard | MessageBox::Overwrite | MessageBox::Cancel;
-        }
 
         auto result = MessageBox::question(this, tr("Reload database"), message, buttons, MessageBox::Merge);
         switch (result) {
         case MessageBox::Cancel:
             reloadCanceled();
             return;
-        case MessageBox::Overwrite:
         case MessageBox::Ignore:
             m_db->setIgnoreFileChangesUntilSaved(true);
             m_blockAutoSave = false;
-            reloadFinish(!triggeredBySave);
-            // If triggered by save, attempt another save
-            if (triggeredBySave) {
-                save();
-                emit updateSyncProgress(100, tr("Database file overwritten."));
-            }
+            reloadFinish();
             return;
         case MessageBox::Merge:
             merge = true;
@@ -2508,6 +2671,7 @@ bool DatabaseWidget::save()
     ++m_saveAttempts;
 
     QString errorMessage;
+    m_lastSaveError.clear();
     if (performSave(errorMessage)) {
         m_saveAttempts = 0;
         m_blockAutoSave = false;
@@ -2531,6 +2695,7 @@ bool DatabaseWidget::save()
         }
     }
 
+    m_lastSaveError = errorMessage;
     showMessage(tr("Writing the database failed: %1").arg(errorMessage),
                 MessageWidget::Error,
                 true,
@@ -2594,14 +2759,7 @@ bool DatabaseWidget::performSave(QString& errorMessage, const QString& fileName)
     }
     QApplication::processEvents();
 
-    Database::SaveAction saveAction = Database::Atomic;
-    if (!config()->get(Config::UseAtomicSaves).toBool()) {
-        if (config()->get(Config::UseDirectWriteSaves).toBool()) {
-            saveAction = Database::DirectWrite;
-        } else {
-            saveAction = Database::TempFile;
-        }
-    }
+    const Database::SaveAction saveAction = configuredSaveAction();
 
     QString backupFilePath;
     if (config()->get(Config::BackupBeforeSave).toBool()) {
