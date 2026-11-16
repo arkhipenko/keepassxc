@@ -481,6 +481,65 @@ install(TARGETS ${PROGNAME}
         BUNDLE DESTINATION . COMPONENT Runtime
         RUNTIME DESTINATION ${BIN_INSTALL_DIR} COMPONENT Runtime)
 
+# Debian package for the native Linux build. Configure with CMAKE_INSTALL_PREFIX=/usr,
+# build, then run "cpack -G DEB" in the build folder.
+if(UNIX AND NOT APPLE AND KEEPASSXC_DIST_TYPE STREQUAL "Native")
+    set(KEEPASSXC_DEB_MAINTAINER "KeePassXC fork <noreply@localhost>"
+            CACHE STRING "Maintainer field of the Debian package")
+
+    # A "-" in a Debian version starts the package revision, so use "~" instead.
+    # "2.8.0~snapshot" sorts before "2.8.0".
+    string(REPLACE "-" "~" _deb_version "${KEEPASSXC_VERSION}")
+    # Add the commit date and hash, so that the package of a newer commit upgrades
+    # the package of an older one.
+    if(GIT_HEAD)
+        execute_process(COMMAND ${CMAKE_COMMAND} -E env TZ=UTC
+                    git log -1 --date=format-local:%Y%m%d%H%M --format=%cd
+                WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+                OUTPUT_VARIABLE _deb_git_date
+                OUTPUT_STRIP_TRAILING_WHITESPACE
+                ERROR_QUIET)
+        if(_deb_git_date MATCHES "^[0-9]+$" AND GIT_HEAD MATCHES "^[0-9a-f]+$")
+            string(APPEND _deb_version "+git${_deb_git_date}.${GIT_HEAD}")
+        endif()
+    endif()
+
+    set(CPACK_GENERATOR "DEB")
+    set(CPACK_PACKAGING_INSTALL_PREFIX "${CMAKE_INSTALL_PREFIX}")
+    set(CPACK_STRIP_FILES ON)
+    # Directories get mode 0755, whatever the umask of the build user is.
+    set(CPACK_INSTALL_DEFAULT_DIRECTORY_PERMISSIONS
+            OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+    set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Cross-platform password manager (KeePassXC fork)")
+    set(CPACK_DEBIAN_PACKAGE_NAME "keepassxc-fork")
+    set(CPACK_DEBIAN_PACKAGE_VERSION "${_deb_version}")
+    set(CPACK_DEBIAN_PACKAGE_RELEASE "1")
+    set(CPACK_DEBIAN_FILE_NAME "DEB-DEFAULT")
+    set(CPACK_DEBIAN_PACKAGE_MAINTAINER "${KEEPASSXC_DEB_MAINTAINER}")
+    set(CPACK_DEBIAN_PACKAGE_SECTION "utils")
+    set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
+    set(CPACK_DEBIAN_PACKAGE_HOMEPAGE "https://github.com/arkhipenko/keepassxc")
+    # CPack puts CPACK_PACKAGE_DESCRIPTION_SUMMARY in front as the first line. CPack
+    # copies the values into CPackConfig.cmake without escaping, so they must not
+    # contain double quotes.
+    string(CONCAT CPACK_DEBIAN_PACKAGE_DESCRIPTION
+            "KeePassXC with KeePass 2.x features added: database synchronization\n"
+            "identical to the KeePass command File > Synchronize. It reads and writes\n"
+            "KeePass KDBX databases. It replaces the keepassxc packages of the\n"
+            "distribution.")
+    # dpkg-shlibdeps finds the shared libraries. The Qt SVG plugins are loaded at run
+    # time, so they are not found that way. The application icons need them.
+    set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+    set(CPACK_DEBIAN_PACKAGE_DEPENDS "qt6-svg-plugins")
+    set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "qt6-wayland")
+    # Remove the keepassxc packages of the distribution on install. Use a different
+    # package name, so that apt does not replace this package with a newer one of them.
+    set(CPACK_DEBIAN_PACKAGE_CONFLICTS "keepassxc, keepassxc-full, keepassxc-minimal")
+    set(CPACK_DEBIAN_PACKAGE_REPLACES "keepassxc, keepassxc-full, keepassxc-minimal")
+    set(CPACK_DEBIAN_PACKAGE_PROVIDES "keepassxc (= ${_deb_version}-${CPACK_DEBIAN_PACKAGE_RELEASE})")
+    include(CPack)
+endif()
+
 # Windows Installer Definition
 if(WIN32)
     # Deploy used libraries into build directory for debugging
