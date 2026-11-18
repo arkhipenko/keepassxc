@@ -50,6 +50,7 @@
 #include "gui/entry/EntryView.h"
 #include "gui/osutils/OSUtils.h"
 #include "gui/remote/RemoteSettings.h"
+#include "gui/triggers/TriggerManager.h"
 #include "keeshare/KeeShare.h"
 #include "keeshare/SettingsPageKeeShare.h"
 #include "keys/drivers/YubiKey.h"
@@ -526,6 +527,18 @@ MainWindow::MainWindow()
     m_actionMultiplexer.connect(m_ui->actionGroupSortAsc, SIGNAL(triggered()), SLOT(sortGroupsAsc()));
     m_actionMultiplexer.connect(m_ui->actionGroupSortDesc, SIGNAL(triggered()), SLOT(sortGroupsDesc()));
     m_actionMultiplexer.connect(m_ui->actionGroupDownloadFavicons, SIGNAL(triggered()), SLOT(downloadAllFavicons()));
+
+    // Trigger system: load at the first unlock of a database that holds the trigger key
+    m_triggerManager = new TriggerManager(this, m_ui->tabWidget, m_ui->toolBar, m_searchWidgetAction);
+    connect(m_ui->tabWidget, &DatabaseTabWidget::databaseUnlocked, m_triggerManager, &TriggerManager::databaseUnlocked);
+    connect(m_ui->actionTriggers, &QAction::triggered, m_triggerManager, &TriggerManager::editTriggers);
+    connect(m_ui->actionCopyTriggerKey,
+            &QAction::triggered,
+            m_triggerManager,
+            &TriggerManager::copyTriggerKeyToActiveDatabase);
+    connect(m_ui->menuTools, &QMenu::aboutToShow, this, [this] {
+        m_ui->actionCopyTriggerKey->setEnabled(m_triggerManager && m_triggerManager->canCopyTriggerKey());
+    });
 
     connect(m_ui->actionSettings, SIGNAL(toggled(bool)), SLOT(switchToSettings(bool)));
     connect(m_ui->actionPasswordGenerator, SIGNAL(toggled(bool)), SLOT(togglePasswordGenerator(bool)));
@@ -1400,6 +1413,10 @@ void MainWindow::closeEvent(QCloseEvent* event)
 
     m_appExiting = saveLastDatabases();
     if (m_appExiting) {
+        // Raised after all databases are closed, as in KeePass
+        if (m_triggerManager) {
+            m_triggerManager->applicationExit();
+        }
         saveWindowInformation();
         event->accept();
         m_restartRequested ? kpxcApp->restart() : QApplication::quit();

@@ -118,6 +118,12 @@ add_unit_test(NAME testmerge SOURCES TestMerge.cpp
 add_unit_test(NAME testdatabasesync SOURCES TestDatabaseSync.cpp
         LIBS testsupport ${TEST_LIBRARIES})
 
+add_unit_test(NAME testtriggers SOURCES TestTriggers.cpp
+        LIBS testsupport ${TEST_LIBRARIES})
+
+add_unit_test(NAME testtriggerdata SOURCES TestTriggerData.cpp
+        LIBS testsupport ${TEST_LIBRARIES})
+
 add_unit_test(NAME testpasswordgenerator SOURCES TestPasswordGenerator.cpp
         LIBS ${TEST_LIBRARIES})
 

@@ -31,6 +31,7 @@
 #include "core/Entry.h"
 #include "core/EntrySearcher.h"
 #include "core/Group.h"
+#include "core/triggers/TriggerSystem.h"
 #include "gui/Clipboard.h"
 #include "gui/GuiTools.h"
 #include "gui/Icons.h"
@@ -370,7 +371,9 @@ void AutoTypeSelectDialog::buildActionMenu()
     connect(copyUsernameAction, &QAction::triggered, this, [&] {
         auto entry = m_ui->view->currentMatch().first;
         if (entry) {
-            clipboard()->setText(entry->resolvePlaceholder(entry->username()));
+            const QString text = entry->resolvePlaceholder(entry->username());
+            clipboard()->setText(text);
+            triggerSystem()->raiseEntryDataCopied(text);
             reject();
         }
     });
@@ -380,7 +383,9 @@ void AutoTypeSelectDialog::buildActionMenu()
     connect(copyPasswordAction, &QAction::triggered, this, [&] {
         auto entry = m_ui->view->currentMatch().first;
         if (entry) {
-            clipboard()->setText(entry->resolvePlaceholder(entry->password()));
+            const QString text = entry->resolvePlaceholder(entry->password());
+            clipboard()->setText(text);
+            triggerSystem()->raiseEntryDataCopied(text);
             reject();
         }
     });
@@ -390,7 +395,9 @@ void AutoTypeSelectDialog::buildActionMenu()
     connect(copyTotpAction, &QAction::triggered, this, [&] {
         auto entry = m_ui->view->currentMatch().first;
         if (entry) {
-            clipboard()->setText(entry->totp());
+            const QString text = entry->totp();
+            clipboard()->setText(text);
+            triggerSystem()->raiseEntryDataCopied(text);
             reject();
         }
     });
@@ -400,7 +407,9 @@ void AutoTypeSelectDialog::buildActionMenu()
     connect(copyUrlAction, &QAction::triggered, this, [&] {
         auto entry = m_ui->view->currentMatch().first;
         if (entry) {
-            clipboard()->setText(entry->resolvePlaceholder(entry->url()));
+            const QString text = entry->resolvePlaceholder(entry->url());
+            clipboard()->setText(text);
+            triggerSystem()->raiseEntryDataCopied(text);
             reject();
         }
     });

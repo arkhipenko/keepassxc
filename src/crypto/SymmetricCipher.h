@@ -54,6 +54,13 @@ public:
 
     bool isInitialized() const;
     Q_REQUIRED_RESULT bool init(Mode mode, Direction direction, const QByteArray& key, const QByteArray& iv);
+    // Initialize an authenticated mode (AES-256-GCM) with associated data: data that is not encrypted,
+    // but that the authentication tag also covers. The other modes do not accept associated data.
+    Q_REQUIRED_RESULT bool init(Mode mode,
+                                Direction direction,
+                                const QByteArray& key,
+                                const QByteArray& iv,
+                                const QByteArray& associatedData);
     Q_REQUIRED_RESULT bool process(char* data, int len);
     Q_REQUIRED_RESULT bool process(QByteArray& data);
     Q_REQUIRED_RESULT bool finish(QByteArray& data);

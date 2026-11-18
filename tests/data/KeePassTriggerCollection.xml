@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TriggerCollection xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+	<Triggers>
+		<Trigger>
+			<Guid>q2Ez9WQkS1yYc6sZ5f6x8A==</Guid>
+			<Name>Export after save</Name>
+			<Comments>Exports the database after each save.</Comments>
+			<TurnOffAfterAction>true</TurnOffAfterAction>
+			<Events>
+				<Event>
+					<TypeGuid>s6j9/ngTSmqcXdW6hDqbjg==</TypeGuid>
+					<Parameters>
+						<Parameter>1</Parameter>
+						<Parameter>Passwords.kdbx</Parameter>
+					</Parameters>
+				</Event>
+			</Events>
+			<Conditions>
+				<Condition>
+					<TypeGuid>uQ/4B3M4T+q7LrwL6juYww==</TypeGuid>
+					<Parameters>
+						<Parameter>%USERNAME%</Parameter>
+						<Parameter>0</Parameter>
+						<Parameter>alice</Parameter>
+					</Parameters>
+					<Negate>true</Negate>
+				</Condition>
+			</Conditions>
+			<Actions>
+				<Action>
+					<TypeGuid>D5prW87VRr65NO2xP5RIIg==</TypeGuid>
+					<Parameters>
+						<Parameter>{DB_DIR}\Export.xml</Parameter>
+						<Parameter>KeePass XML (2.x)</Parameter>
+						<Parameter />
+						<Parameter />
+					</Parameters>
+				</Action>
+			</Actions>
+		</Trigger>
+		<Trigger>
+			<Guid>7mH0QfE8T0mUQ0wW5lq3Zg==</Guid>
+			<Name>Disabled trigger</Name>
+			<Enabled>false</Enabled>
+			<InitiallyOn>false</InitiallyOn>
+			<Events />
+			<Conditions />
+			<Actions />
+		</Trigger>
+	</Triggers>
+</TriggerCollection>

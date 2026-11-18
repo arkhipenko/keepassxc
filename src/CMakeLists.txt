@@ -35,6 +35,7 @@ set(core_SOURCES
         core/FileWatcher.cpp
         core/Group.cpp
         core/HibpOffline.cpp
+        core/ImportMerger.cpp
         core/InactivityTimer.cpp
         core/Merger.cpp
         core/Metadata.cpp
@@ -49,6 +50,14 @@ set(core_SOURCES
         core/Tools.cpp
         core/Totp.cpp
         core/Translator.cpp
+        core/triggers/HostPing.cpp
+        core/triggers/Trigger.cpp
+        core/triggers/TriggerPlaceholders.cpp
+        core/triggers/TriggerStore.cpp
+        core/triggers/TriggerSystem.cpp
+        core/triggers/TriggerTypes.cpp
+        core/triggers/TriggerUtil.cpp
+        core/triggers/TriggerXml.cpp
         cli/Utils.cpp
         crypto/Crypto.cpp
         crypto/CryptoHash.cpp
@@ -61,6 +70,7 @@ set(core_SOURCES
         format/CsvExporter.cpp
         format/CsvParser.cpp
         format/HtmlExporter.cpp
+        format/KeePass1CsvExporter.cpp
         format/KeePass1Reader.cpp
         format/KeePass2.cpp
         format/KeePass2RandomStream.cpp
@@ -172,6 +182,10 @@ set(gui_SOURCES
         gui/tag/TagModel.cpp
         gui/tag/TagView.cpp
         gui/tag/TagsEdit.cpp
+        gui/triggers/TriggerDataExchange.cpp
+        gui/triggers/TriggerEditDialogs.cpp
+        gui/triggers/TriggerManager.cpp
+        gui/triggers/TriggersDialog.cpp
         gui/databasekey/KeyComponentWidget.cpp
         gui/databasekey/PasswordEditWidget.cpp
         gui/databasekey/YubiKeyEditWidget.cpp
@@ -397,6 +411,8 @@ if(UNIX AND NOT APPLE)
     endif()
 endif()
 if(WIN32)
+    # Iphlpapi and Ws2_32: ICMP echo of the trigger condition "Remote host is reachable"
+    target_link_libraries(keepassxc_core Iphlpapi.lib Ws2_32.lib)
     target_link_libraries(keepassxc_gui Wtsapi32.lib Ws2_32.lib)
     if (WINSDK)
         target_link_libraries(keepassxc_gui WindowsApp.lib)
@@ -524,7 +540,8 @@ if(UNIX AND NOT APPLE AND KEEPASSXC_DIST_TYPE STREQUAL "Native")
     # contain double quotes.
     string(CONCAT CPACK_DEBIAN_PACKAGE_DESCRIPTION
             "KeePassXC with KeePass 2.x features added: database synchronization\n"
-            "identical to the KeePass command File > Synchronize. It reads and writes\n"
+            "identical to the KeePass command File > Synchronize, and the KeePass\n"
+            "trigger system (events, conditions and actions). It reads and writes\n"
             "KeePass KDBX databases. It replaces the keepassxc packages of the\n"
             "distribution.")
     # dpkg-shlibdeps finds the shared libraries. The Qt SVG plugins are loaded at run

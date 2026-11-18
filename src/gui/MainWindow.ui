@@ -386,6 +386,10 @@
     </property>
     <addaction name="actionPasswordGenerator"/>
     <addaction name="actionClearSSHAgent"/>
+    <addaction name="separator"/>
+    <addaction name="actionTriggers"/>
+    <addaction name="actionCopyTriggerKey"/>
+    <addaction name="separator"/>
     <addaction name="actionSettings"/>
    </widget>
    <widget class="QMenu" name="menuView">
@@ -777,6 +781,22 @@
    </property>
    <property name="shortcut">
     <string notr="true">Ctrl+C</string>
+   </property>
+  </action>
+  <action name="actionTriggers">
+   <property name="text">
+    <string>&amp;Triggers…</string>
+   </property>
+   <property name="toolTip">
+    <string>Edit the triggers that automate workflows</string>
+   </property>
+  </action>
+  <action name="actionCopyTriggerKey">
+   <property name="text">
+    <string>Copy Trigger &amp;Key to Active Database</string>
+   </property>
+   <property name="toolTip">
+    <string>Copy the trigger key to the active database, so that this database also loads the triggers</string>
    </property>
   </action>
   <action name="actionSettings">

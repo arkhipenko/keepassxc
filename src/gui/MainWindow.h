@@ -38,6 +38,7 @@ namespace Ui
 class InactivityTimer;
 class SearchWidget;
 class MainWindowEventFilter;
+class TriggerManager;
 
 class MainWindow : public QMainWindow
 {
@@ -189,6 +190,7 @@ private:
     QPointer<QSystemTrayIcon> m_trayIcon;
     QPointer<ScreenLockListener> m_screenLockListener;
     QPointer<SearchWidget> m_searchWidget;
+    QPointer<TriggerManager> m_triggerManager;
     QPointer<QProgressBar> m_progressBar;
     QPointer<QLabel> m_progressBarLabel;
     QPointer<QLabel> m_statusBarLabel;

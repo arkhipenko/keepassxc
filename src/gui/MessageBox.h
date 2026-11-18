@@ -60,10 +60,11 @@ public:
         Continue = 1 << 27,
         ContinueWithWeakPass = 1 << 28,
         Synchronize = 1 << 29,
+        Replace = 1 << 30,
 
         // Internal loop markers. Update Last when new KeePassXC button is added
         First = Ok,
-        Last = Synchronize,
+        Last = Replace,
     };
 
     enum Action

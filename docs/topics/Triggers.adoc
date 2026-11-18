@@ -1,0 +1,125 @@
+= KeePassXC - Triggers
+include::.sharedheader[]
+:imagesdir: ../images
+
+// tag::content[]
+== Triggers
+A trigger does actions automatically when an event occurs. For example, a trigger can export the database after each save, or synchronize the database with a copy on a USB drive when you close it. The trigger system works as the trigger system of KeePass 2.x. Triggers copied in KeePass can be pasted into KeePassXC, and the reverse.
+
+A trigger has these parts:
+
+* *Events*: one or more events. The trigger runs when one of them occurs.
+* *Conditions*: zero or more conditions. All conditions must be true. A condition can be inverted with _Not_.
+* *Actions*: one or more actions. They run in the order of the list.
+
+Each trigger also has these properties:
+
+* *Enabled*: a disabled trigger never runs.
+* *Initially on*: the state of the trigger when the triggers load. A trigger that is off does not run. An action can turn a trigger on or off.
+* *Turn off after executing actions*: the trigger runs only one time, until it is turned on again.
+
+=== Editing Triggers
+Select _Tools_ -> _Triggers..._ to open the trigger list. You must unlock a database before you can edit the triggers (see <<Where KeePassXC Keeps the Triggers, Where KeePassXC Keeps the Triggers>>).
+
+* _Enable trigger system_ turns all triggers on or off. When it is cleared, no trigger runs.
+* _Add..._, _Edit..._ and _Delete_ change the list. The arrow buttons change the order. Triggers run in the order of the list.
+* _Tools_ -> _Copy Triggers to Clipboard_ and _Copy Selected Triggers to Clipboard_ copy triggers as text. _Paste Triggers from Clipboard_ adds the triggers in the clipboard. The text is the same as the text that KeePass 2.x uses, so you can move triggers between KeePass and KeePassXC. A pasted trigger gets a new ID when a trigger with its ID already exists.
+* _OK_ saves the triggers. The changes apply immediately.
+
+The trigger editor has the pages _Properties_, _Events_, _Conditions_ and _Actions_. For each event, condition and action, select the type and set its parameters. A parameter is a text field, a check box or a list.
+
+=== Where KeePassXC Keeps the Triggers
+The triggers are in the file `keepassxc_triggers.dat` in the folder of the application settings file. On Linux this folder is usually `~/.config/keepassxc`. The file is encrypted and authenticated with AES-256-GCM. Other programs cannot read the trigger parameters, for example a password in an _Open database file_ action.
+
+The key of this file is the *trigger key*. KeePassXC keeps the trigger key inside a database. Only a person who can unlock that database can read or change the triggers. A program cannot add a trigger to the file, because it does not have the trigger key. When the file was changed by something other than KeePassXC, no trigger runs and KeePassXC shows a warning.
+
+* The first time that you open _Tools_ -> _Triggers..._, KeePassXC asks to create a trigger key in the active database. KeePassXC then saves the database immediately, together with any unsaved changes.
+* A synchronization (_Database_ -> _Synchronize_) copies the trigger key to the other database file. A merge never removes the trigger key.
+* To use the triggers with a different database, unlock both databases, select the other database, and select _Tools_ -> _Copy Trigger Key to Active Database_.
+
+The triggers load when you unlock a database that holds the trigger key. At that time KeePassXC raises the events _Application initialized_ and _Application started and ready_, then _Opened database file_. Thus a trigger cannot open the first database at startup. To open databases at startup, use the setting _Load previously open databases on startup_.
+
+NOTE: When the trigger file uses a key that no unlocked database holds, _Tools_ -> _Triggers..._ asks you to unlock that database. You can also replace the trigger file with an empty list. The current triggers are then lost.
+
+WARNING: Keep a copy of your triggers (_Copy Triggers to Clipboard_). When you lose all databases that hold the trigger key, you cannot read the trigger file again.
+
+=== Events
+[grid=rows, frame=none, width=90%]
+|===
+|Event |Occurs
+
+|Application initialized |When the triggers load, before _Application started and ready_.
+|Application started and ready |When the triggers load.
+|Application exit |When KeePassXC exits, after all databases are closed.
+|Opened database file |After each unlock of a database.
+|Saving database file |Before a database is saved. For _Save As_, the file path is the new file.
+|Saved database file |After a database was saved.
+|Synchronizing database file |Before a synchronization.
+|Synchronized database file |After a synchronization, also after a failure.
+|Closing database file (before saving) |When a database is closed or locked, before the question about unsaved changes.
+|Closing database file (after saving) |When a database is closed or locked, after the save or discard. Not when you cancel or the save fails.
+|Copied entry data to clipboard |After entry data was copied to the clipboard.
+|Time - Periodic |After each interval. _Restart timer on KeePassXC activity_ starts the interval again when you use the keyboard or the mouse in KeePassXC. The event does not occur while a dialog is open.
+|Custom toolbar button clicked |When you click a toolbar button that a trigger added.
+|===
+
+The database events have a file filter (_File/URL - Comparison_ and _File/URL - Filter_). The copy event has a value filter. An empty filter matches all. The comparisons are _Equals_, _Contains_, _Starts with_, _Ends with_ and _Matches regular expression_. They ignore case.
+
+=== Conditions
+[grid=rows, frame=none, width=90%]
+|===
+|Condition |True when
+
+|Environment variable |The variable exists and its value matches.
+|String |The two texts match. Use placeholders to compare values.
+|File exists |The local file exists. An empty path is true.
+|Remote host is reachable (ping) |The host answers a ping. An empty host is true. On Linux the ping needs permission for unprivileged ICMP sockets (`net.ipv4.ping_group_range`).
+|Database has unsaved changes |The active or the triggering database has unsaved changes.
+|===
+
+=== Actions
+[grid=rows, frame=none, width=90%]
+|===
+|Action |Effect
+
+|Execute command line / URL |Opens a URL or a document, or starts a program with arguments. _Wait for exit_ blocks KeePassXC until the program ends. On Linux, _Window style_ and _Verb_ have no effect.
+|Change trigger on/off state |Turns a trigger on, off, or toggles it. An empty name means the current trigger.
+|Open database file |Opens a database. With a password or a key file, KeePassXC unlocks it. Without them, the unlock view opens.
+|Save active database |Saves the active database, also when it has no changes.
+|Synchronize active database with a file/URL |Synchronizes with one or more files (each path in double quotes). _On error - Silent_ shows no error message. _On error - Continue_ saves the database and copies it over the files that merged, also when other files failed.
+|Import into active database |Imports a file. Formats: `KeePass KDBX (2.x)`, `KeePass XML (2.x)`, `KeePass KDB (1.x)`, `Bitwarden JSON`, `1Password 1PUX` and `Generic CSV Importer` (opens the CSV import dialog). Methods: _Create new IDs_ (default), _Keep existing_, _Overwrite existing_, _Overwrite if newer_, _Overwrite if newer and apply deletions_.
+|Export active database |Exports to a file. Formats: `KeePass KDBX (2.x)`, `KeePass XML (2.x)`, `KeePass CSV (1.x)` and `Customizable HTML File`. KeePassXC asks for the master key before each export. _Filter - Group_ starts with its separator, for example `/Internet/Mail`. _Filter - Tag_ keeps only the entries with the tag.
+|Close active database |Closes the active database.
+|Activate database (select tab) |Selects the first tab whose file path contains the text.
+|Wait |Waits the time in milliseconds. KeePassXC does not respond during the wait.
+|Show message box |Shows a message. The answer can abort the actions of the trigger or run a command.
+|Perform global auto-type |Starts global auto-type.
+|Perform auto-type with selected entry |Types the sequence (or the default sequence) of the selected entry into the previous window.
+|Show entries by tag |Searches for the entries with the tag.
+|Add custom toolbar button |Adds a button to the toolbar. A click raises _Custom toolbar button clicked_ with the button ID.
+|Remove custom toolbar button |Removes the first button with the ID.
+|===
+
+When an action fails, KeePassXC shows _Trigger execution failed_ and the remaining triggers of that event do not run.
+
+=== Placeholders
+You can use placeholders in most parameters. KeePassXC replaces them before the trigger uses the parameter. The entry is the selected entry of the active database.
+
+* Database: `{DB_PATH}`, `{DB_DIR}`, `{DB_NAME}`, `{DB_BASENAME}`, `{DB_EXT}`, `{DOCDIR}` (the active database).
+* Application and system: `{APPDIR}`, `{ENV_DIRSEP}`, `{ENV_PROGRAMFILES_X86}` (empty on Linux and macOS), and environment variables as `%NAME%`.
+* Groups: `{GROUP}`, `{GROUP_PATH}`, `{GROUP_NOTES}` (the group of the entry) and `{GROUP_SEL}`, `{GROUP_SEL_PATH}`, `{GROUP_SEL_NOTES}` (the selected group).
+* Clipboard: `{CLIPBOARD}` and `{CLIPBOARD-SET:/text/}`.
+* Commands: `{CMD:/command/options/}` runs a command and inserts its output. KeePassXC asks before it runs the command. Comments: `{C:text}` is removed.
+* Entry: `{TITLE}`, `{USERNAME}`, `{PASSWORD}`, `{URL}`, `{NOTES}`, `{S:name}`, `{REF:...}`, `{DT_...}`, `{T-CONV:...}`, `{T-REPLACE-RX:...}` and the other entry placeholders of KeePassXC.
+
+=== Differences from KeePass
+* Triggers are not in the KeePass configuration file. KeePassXC does not read or write the KeePass enforced configuration file. Use copy and paste to move triggers.
+* The application start events occur when the triggers load, at the first unlock of a database that holds the trigger key.
+* File/URL parameters accept local files only. The I/O connection parameters are ignored.
+* The Windows user account key part is not supported. An action that sets it fails.
+* KeePass plugins, application policies and the placeholders `{BASE}`, `{PASSWORD_ENC}`, `{PICKFIELD}` and `{FIREFOX}` (and other browser paths) are not supported.
+* Import formats that KeePassXC cannot read and the export formats `KeePass KDB (1.x)`, `Mozilla Bookmarks HTML` and XSL transformations are not supported. `Customizable HTML File` uses the HTML layout of KeePassXC.
+* A new object of an import is added at the end of its group. KeePass places it next to its neighbours.
+* The master key check before an export does not ask for a hardware key again.
+* `{CMD:...}` asks for a confirmation each time.
+// end::content[]

@@ -21,6 +21,7 @@
 
 #include "core/Clock.h"
 #include "core/Totp.h"
+#include "core/triggers/TriggerSystem.h"
 #include "gui/Clipboard.h"
 #include "gui/MainWindow.h"
 
@@ -58,7 +59,9 @@ TotpDialog::~TotpDialog() = default;
 
 void TotpDialog::copyToClipboard()
 {
-    clipboard()->setText(m_entry->totp());
+    const QString totp = m_entry->totp();
+    clipboard()->setText(totp);
+    triggerSystem()->raiseEntryDataCopied(totp);
     if (config()->get(Config::HideWindowOnCopy).toBool()) {
         if (config()->get(Config::MinimizeOnCopy).toBool()) {
             getMainWindow()->minimizeOrHide();

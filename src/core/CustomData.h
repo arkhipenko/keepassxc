@@ -73,6 +73,8 @@ public:
     static const QString FdoSecretsExposedGroup;
     static const QString RandomSlug;
     static const QString RemoteProgramSettings;
+    // Key of the trigger file. It is kept inside the database so that only the master key gives access to it.
+    static const QString TriggerKey;
 
     // Pre-KDBX 4.1
     static const QString ExcludeFromReportsLegacy;

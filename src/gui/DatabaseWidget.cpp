@@ -37,6 +37,8 @@
 #include "core/EntrySearcher.h"
 #include "core/Merger.h"
 #include "core/Tools.h"
+#include "core/triggers/TriggerSystem.h"
+#include "core/triggers/TriggerTypes.h"
 #include "gui/Clipboard.h"
 #include "gui/CloneDialog.h"
 #include "gui/DatabaseOpenDialog.h"
@@ -833,6 +835,7 @@ void DatabaseWidget::showTotpKeyQrCode()
 void DatabaseWidget::setClipboardTextAndMinimize(const QString& text)
 {
     clipboard()->setText(text);
+    triggerSystem()->raiseEntryDataCopied(text);
     if (config()->get(Config::HideWindowOnCopy).toBool()) {
         if (config()->get(Config::MinimizeOnCopy).toBool()) {
             getMainWindow()->minimizeOrHide();
@@ -1501,19 +1504,36 @@ QString DatabaseWidget::sameKeyHint()
  */
 bool DatabaseWidget::synchronizeWithFiles(const QStringList& filePaths)
 {
+    return synchronizeWithFiles(filePaths, SynchronizeOptions());
+}
+
+/**
+ * Synchronize with the error options of the KeePass trigger action (KeePass/DataExchange/ImportUtil.cs):
+ * - silent: no error message is shown.
+ * - continueOnError: when the merge of a file fails, the database is still saved and copied over the
+ *   files that merged. The result is still a failure.
+ * With both options off, the flow is the one described above.
+ */
+bool DatabaseWidget::synchronizeWithFiles(const QStringList& filePaths, const SynchronizeOptions& options)
+{
     if (!m_db || isLocked() || filePaths.isEmpty()) {
         return false;
     }
     if (m_db->filePath().isEmpty()) {
-        showErrorMessage(tr("Save the database to a file before you synchronize it."));
+        if (!options.silent) {
+            showErrorMessage(tr("Save the database to a file before you synchronize it."));
+        }
         return false;
     }
     if (m_reloading || isSaving()) {
-        showErrorMessage(tr("Synchronization failed: the database is being saved or reloaded. Try again."));
+        if (!options.silent) {
+            showErrorMessage(tr("Synchronization failed: the database is being saved or reloaded. Try again."));
+        }
         return false;
     }
 
     emit databaseSynchronizing();
+    raiseTriggerEvent(TriggerIds::SynchronizingDatabaseFile);
     hideMessage();
     emit updateSyncProgress(0, tr("Synchronizing…"));
 
@@ -1535,16 +1555,18 @@ bool DatabaseWidget::synchronizeWithFiles(const QStringList& filePaths)
     }
 
     bool success = errors.isEmpty();
-    if (success) {
+    bool saved = false;
+    if (success || options.continueOnError) {
         emit updateSyncProgress(50, tr("Synchronizing…"));
         // The database is always saved, also when the merge changed nothing
-        success = save();
-        if (!success) {
+        saved = save();
+        if (!saved) {
             errors << tr("Writing the database failed: %1").arg(m_lastSaveError);
+            success = false;
         }
     }
 
-    if (success) {
+    if (saved) {
         // Copy the saved file over each other file, so that all files are the same
         const QString savedFile = m_db->filePath();
         for (const auto& filePath : asConst(mergedFiles)) {
@@ -1565,7 +1587,7 @@ bool DatabaseWidget::synchronizeWithFiles(const QStringList& filePaths)
     emit updateSyncProgress(-1, "");
     if (success) {
         showMessage(tr("Synchronization completed successfully."), MessageWidget::Positive);
-    } else {
+    } else if (!options.silent) {
         showMessage(QString("%1\n%2").arg(tr("Synchronization failed."), errors.join("\n")),
                     MessageWidget::Error,
                     true,
@@ -1573,7 +1595,17 @@ bool DatabaseWidget::synchronizeWithFiles(const QStringList& filePaths)
     }
 
     emit databaseSynchronized(success);
+    // Always raised, also after a failure, so that the event pair can turn other triggers off and on
+    raiseTriggerEvent(TriggerIds::SynchronizedDatabaseFile);
     return success;
+}
+
+void DatabaseWidget::raiseTriggerEvent(const QUuid& eventType, const QString& filePath)
+{
+    TriggerEventProperties properties;
+    properties.database = m_db;
+    properties.filePath = filePath;
+    triggerSystem()->raiseEvent(eventType, properties);
 }
 
 /**
@@ -2163,6 +2195,9 @@ bool DatabaseWidget::lock()
 
     clipboard()->clearCopiedText();
 
+    // Trigger event before the save question. A trigger cannot cancel the close (as KeePass).
+    raiseTriggerEvent(TriggerIds::ClosingDatabaseFilePre);
+
     if (isEditWidgetModified()) {
         auto result = MessageBox::question(this,
                                            tr("Lock Database?"),
@@ -2223,6 +2258,9 @@ bool DatabaseWidget::lock()
         QString errorMessage;
         performSave(errorMessage);
     }
+
+    // Trigger event after the save or discard decision. It is not raised after a cancel or a failed save.
+    raiseTriggerEvent(TriggerIds::ClosingDatabaseFilePost);
 
     if (m_groupView->currentGroup()) {
         m_groupBeforeLock = m_groupView->currentGroup()->uuid();
@@ -2385,6 +2423,7 @@ void DatabaseWidget::reloadDatabaseFile(bool triggeredBySave)
         switch (result) {
         case MessageBox::Synchronize: {
             emit databaseSynchronizing();
+            raiseTriggerEvent(TriggerIds::SynchronizingDatabaseFile);
             if (!openResult) {
                 // KeePass refuses a synchronization with a file that has a different key
                 reloadCanceled();
@@ -2394,6 +2433,7 @@ void DatabaseWidget::reloadDatabaseFile(bool triggeredBySave)
                             true,
                             MessageWidget::DisableAutoHide);
                 emit databaseSynchronized(false);
+                raiseTriggerEvent(TriggerIds::SynchronizedDatabaseFile);
                 return;
             }
 
@@ -2417,6 +2457,7 @@ void DatabaseWidget::reloadDatabaseFile(bool triggeredBySave)
                             MessageWidget::DisableAutoHide);
             }
             emit databaseSynchronized(success);
+            raiseTriggerEvent(TriggerIds::SynchronizedDatabaseFile);
             return;
         }
         case MessageBox::Overwrite:
@@ -2750,6 +2791,9 @@ bool DatabaseWidget::saveAs()
 
 bool DatabaseWidget::performSave(QString& errorMessage, const QString& fileName)
 {
+    // Trigger event before the write. For Save As, the event path is the target path (as KeePass).
+    raiseTriggerEvent(TriggerIds::SavingDatabaseFile, fileName);
+
     QPointer<QWidget> focusWidget(qApp->focusWidget());
 
     // Lock out interactions
@@ -2795,6 +2839,10 @@ bool DatabaseWidget::performSave(QString& errorMessage, const QString& fileName)
 
     if (focusWidget && focusWidget->isVisible()) {
         focusWidget->setFocus();
+    }
+
+    if (ok) {
+        raiseTriggerEvent(TriggerIds::SavedDatabaseFile);
     }
 
     return ok;

@@ -21,10 +21,20 @@
 #include "config-keepassx.h"
 #include "format/KeePass2.h"
 
+#include <botan/aead.h>
 #include <botan/block_cipher.h>
 #include <botan/cipher_mode.h>
 
 bool SymmetricCipher::init(Mode mode, Direction direction, const QByteArray& key, const QByteArray& iv)
+{
+    return init(mode, direction, key, iv, {});
+}
+
+bool SymmetricCipher::init(Mode mode,
+                           Direction direction,
+                           const QByteArray& key,
+                           const QByteArray& iv,
+                           const QByteArray& associatedData)
 {
     m_mode = mode;
     if (mode == InvalidMode) {
@@ -50,6 +60,18 @@ bool SymmetricCipher::init(Mode mode, Direction direction, const QByteArray& key
             m_cipher.reset();
             m_error = QObject::tr("SymmetricCipher::init: Invalid IV size of %1 for %2.").arg(iv.size()).arg(botanMode);
             return false;
+        }
+        if (!associatedData.isEmpty()) {
+            // Associated data must be set after the key and before the start of the message
+            auto* aead = dynamic_cast<Botan::AEAD_Mode*>(m_cipher.data());
+            if (!aead) {
+                m_mode = InvalidMode;
+                m_cipher.reset();
+                m_error = QObject::tr("SymmetricCipher::init: %1 does not accept associated data.").arg(botanMode);
+                return false;
+            }
+            aead->set_associated_data(reinterpret_cast<const uint8_t*>(associatedData.constData()),
+                                      static_cast<size_t>(associatedData.size()));
         }
         m_cipher->start(reinterpret_cast<const uint8_t*>(iv.data()), iv.size());
     } catch (std::exception& e) {

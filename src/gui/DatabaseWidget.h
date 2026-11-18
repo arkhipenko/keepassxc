@@ -128,8 +128,18 @@ public:
     void setSplitterSizes(const QHash<Config::ConfigKey, QList<int>>& sizes);
     void setSearchStringForAutoType(const QString& search);
 
+    // Error handling of a synchronization, as the KeePass trigger action "Synchronize active database"
+    struct SynchronizeOptions
+    {
+        // No error message is shown
+        bool silent = false;
+        // When the merge of a file fails, the database is still saved and copied over the files that merged
+        bool continueOnError = false;
+    };
+
     void syncWithRemote(const RemoteParams* params);
     bool synchronizeWithFiles(const QStringList& filePaths);
+    bool synchronizeWithFiles(const QStringList& filePaths, const SynchronizeOptions& options);
     void syncDatabaseWithLockedDatabase(const QString& filePath, const RemoteParams* params);
     QList<RemoteParams*> getRemoteParams() const;
 
@@ -338,6 +348,7 @@ private:
     QString m_lastSaveError;
 
     static QString sameKeyHint();
+    void raiseTriggerEvent(const QUuid& eventType, const QString& filePath = {});
     bool m_attemptingLock = false;
 
     QScopedPointer<RemoteSettings> m_remoteSettings;
