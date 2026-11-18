@@ -32,3 +32,14 @@ out/
 # vcpkg
 vcpkg_installed*/
 
+
+# Claude Code and Design Central (local only)
+.claude/
+CLAUDE.md
+CLAUDE.local.md
+.mcp.json
+.dc/
+claude-start
+
+# Local folders starting with an underscore
+_*/
